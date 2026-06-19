@@ -19,6 +19,11 @@ import subprocess
 from .ledger_client import LedgerClient, load_parties
 from .reasoner import evaluate_trade, Decision
 
+# Real-network mode (Canton Builder LocalNet, JSON API v2) when TG_REAL=1.
+REAL = os.environ.get("TG_REAL") == "1"
+if REAL:
+    from .real_client import RealLedgerClient, load_real_parties
+
 # Template short names (module:entity) — the client fully-qualifies with the pkgid.
 T_PROPOSAL = "TradeGuard.Trade:TradeProposal"
 T_ACCEPTED = "TradeGuard.Trade:AcceptedTrade"
@@ -28,16 +33,22 @@ T_APPROVED = "TradeGuard.Agent:ApprovedAction"
 T_BATCH = "TradeGuard.Settlement:SettlementBatch"
 
 
-def _coord() -> LedgerClient:
-    parties = load_parties()
-    return LedgerClient(party=parties["coordinator"])
+def _parties() -> dict:
+    return load_real_parties() if REAL else load_parties()
 
 
-def _approver() -> LedgerClient:
+def _client(party: str):
+    return RealLedgerClient(party) if REAL else LedgerClient(party=party)
+
+
+def _coord():
+    return _client(_parties()["coordinator"])
+
+
+def _approver():
     # In this MVP the human approver is modeled as the coordinator's principal.
     # Using a distinct 'approver' identity is a one-line change (separate party).
-    parties = load_parties()
-    return LedgerClient(party=parties["coordinator"])
+    return _client(_parties()["coordinator"])
 
 
 def cmd_status() -> None:
@@ -85,8 +96,8 @@ def cmd_watch(once: bool = False, interval: int = 5) -> None:
         time.sleep(interval)
 
 
-def _write_reco(c: LedgerClient, accepted: dict, reasoning) -> None:
-    parties = load_parties()
+def _write_reco(c, accepted: dict, reasoning) -> None:
+    parties = _parties()
     payload = {
         "agent": parties["coordinator"],
         "approver": parties["coordinator"],
@@ -96,8 +107,21 @@ def _write_reco(c: LedgerClient, accepted: dict, reasoning) -> None:
         "confidence": f"{sum(reasoning.checks.values())}/{len(reasoning.checks)} checks passed",
     }
     resp = c.create(T_RECO, payload)
-    if resp.get("status") != 200:
+    failed = ("_http_error" in resp) or (not REAL and resp.get("status") != 200)
+    if failed:
         print("  ! failed to write recommendation:", json.dumps(resp)[:300])
+        return False
+    return True
+
+
+def _ok(resp: dict) -> bool:
+    """True if a create/exercise succeeded, across v1 (status==200) and v2
+    (returns updateId/completionOffset, no _http_error)."""
+    if "_http_error" in resp:
+        return False
+    if REAL:
+        return "updateId" in resp or "completionOffset" in resp or "transactionTree" in resp
+    return resp.get("status") == 200
 
 
 def cmd_approve(trade_id: str) -> None:
@@ -109,7 +133,7 @@ def cmd_approve(trade_id: str) -> None:
         return
     cid = match[0]["contractId"]
     resp = a.exercise(T_RECO, cid, "Approve")
-    if resp.get("status") == 200:
+    if _ok(resp):
         print(f"APPROVED recommendation for {trade_id}. "
               f"Agent is now authorized to settle.")
     else:
@@ -125,7 +149,7 @@ def cmd_reject(trade_id: str, reason: str = "rejected by approver") -> None:
         return
     cid = match[0]["contractId"]
     resp = a.exercise(T_RECO, cid, "ProcessRejection", {"reason": reason})
-    print("rejected." if resp.get("status") == 200 else f"reject failed: {json.dumps(resp)[:200]}")
+    print("rejected." if _ok(resp) else f"reject failed: {json.dumps(resp)[:200]}")
 
 
 def cmd_settle(trade_id: str = "TG-LIVE-001") -> None:
