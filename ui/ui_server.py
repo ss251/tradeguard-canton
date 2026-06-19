@@ -16,6 +16,7 @@ Run: python3 ui_server.py   (after sandbox + json-api + seed are up)
 from __future__ import annotations
 import json
 import os
+import sys
 import urllib.request
 import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,6 +27,15 @@ PROJECT = os.path.dirname(HERE)
 DAML_DIR = os.path.join(PROJECT, "tradeguard")
 JSON_API = "http://localhost:7575"
 ROLES = ["buyer", "seller", "regulator", "outsider"]
+
+# Real-network mode (Canton Builder LocalNet, JSON API v2) when TG_REAL=1.
+# Reuses the agent's proven v2 client. Privacy is still genuinely enforced: the v2
+# filtersByParty query returns only contracts where that party is a stakeholder,
+# regardless of the admin token's breadth (verified: outsider sees 0/0/0).
+REAL = os.environ.get("TG_REAL") == "1"
+if REAL:
+    sys.path.insert(0, PROJECT)
+    from agent.real_client import RealLedgerClient, load_real_parties
 
 import base64
 
@@ -43,17 +53,17 @@ def token_for(party: str) -> str:
 
 
 def load_parties() -> dict:
+    if REAL:
+        return load_real_parties()
     with open(os.path.join(DAML_DIR, "init-result.json")) as f:
         return json.load(f)
 
 
-def load_pkgid() -> str:
-    with open(os.path.join(DAML_DIR, "pkgid.txt")) as f:
-        return f.read().strip()
-
-
 def ledger_query(party: str, template: str) -> list:
-    # Use the package-NAME reference (#tradeguard) so it survives DAR rebuilds.
+    if REAL:
+        # v2 client: returns [{"contractId":..., "payload":...}] (same shape as v1 result)
+        return RealLedgerClient(party).query(template)
+    # sandbox: v1 query with package-name reference (survives DAR rebuilds)
     body = json.dumps({"templateIds": [f"#tradeguard:{template}"]}).encode()
     req = urllib.request.Request(
         JSON_API + "/v1/query", data=body,
@@ -87,6 +97,8 @@ def build_view(role: str) -> dict:
     return {
         "role": role,
         "party_short": party.split("::")[0],
+        "network": "Canton LocalNet (3 validators)" if REAL else "Canton sandbox",
+        "endpoint": "localhost:3975 · JSON API v2" if REAL else "localhost:7575 · JSON API v1",
         "holdings": hview,
         "holding_count": len(hview),
         "sees_settlement": len(trades) > 0 or len(settled) > 0 or len(approved) > 0,

@@ -55,7 +55,7 @@
   <div class="live"><span class="dot"></span>Live · reading the Canton ledger over JSON API</div>
   <div class="mast">
     <div><div class="mark">TradeGuard · Canton</div><h1>Settlement Record</h1></div>
-    <div class="meta">INSTRUMENT &nbsp;<b id="m-inst">TG-LIVE-001</b><br>SOURCE &nbsp;localhost:7575<br>METHOD &nbsp;<b>Atomic DvP</b></div>
+    <div class="meta">INSTRUMENT &nbsp;<b id="m-inst">TG-LIVE-001</b><br>SOURCE &nbsp;<b id="m-src">localhost:7575</b><br>NETWORK &nbsp;<b id="m-net">Canton</b></div>
   </div>
   <p class="thesis">One settled trade. Four readers. Each query hits the <span class="em">same ledger</span> with a different party token — privacy is enforced by Canton, proven live.</p>
 
@@ -67,7 +67,7 @@
   </div>
   <div class="reading" id="reading">Querying ledger as the buyer…</div>
   <div id="record"><div class="record"><div class="loading">loading live ledger data…</div></div></div>
-  <footer>Each role view is a real /v1/query against the Canton JSON Ledger API with that party's JWT. No mock data — sub-transaction privacy is the protocol's, not the UI's.</footer>
+  <footer>Each role view is a real Active-Contracts query against the Canton JSON Ledger API with that party's rights. No mock data — sub-transaction privacy is the protocol's, not the UI's.</footer>
 </div>
 
 <script>
@@ -84,6 +84,8 @@ async function load(role){
   try {
     const res = await fetch("/api/view?role=" + role);
     const v = await res.json();
+    if (v.endpoint) document.getElementById("m-src").textContent = v.endpoint;
+    if (v.network) document.getElementById("m-net").textContent = v.network;
     document.getElementById("reading").textContent = labels[role] + "  (party " + (v.party_short||"") + ")";
     if (!v.sees_anything) {
       el.innerHTML = `<div class="record"><div class="void"><div class="band">
