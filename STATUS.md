@@ -1,55 +1,61 @@
-# TradeGuard — Project Status & Strategy
+# TradeGuard — Project Status
 
-_Last updated: 2026-06-19_
+_Last updated: 2026-06-19 18:08 IST_
 
-## The pivot decision (validated by Grok, independent of sunk cost)
+## STATE: COMPLETE & WORKING END-TO-END (local), PUSHED TO GITHUB
 
-**Bare propose-accept DvP is too simple** — it's the workshop's worked example; ~10 teams will ship it and get filtered early. BUT multilateral netting (the "impressive" option) is the WORST bet for a solo builder on a new toolchain — over-scoping into it and failing to ship is a top failure mode.
+Repo: **github.com/ss251/tradeguard-canton** (main). Runs entirely locally with no
+hackathon org dependency; Seaport DevNet deploy is a final config step once the
+party is whitelisted by Jatin.
 
-**Chosen direction: C + B**
-- **C — daml-finance institutional depth (foundation):** real Holdings / Instruments / Settlement batches / conditional settlement / attestations, instead of hand-rolled templates.
-- **B — a real reasoning agent (differentiator):** monitors ledger state, proposes settlements, handles exceptions/scheduling, constructs *real* Daml choices — behind a human approval gate. NOT a chat wrapper.
-- **Centerpiece (the "only-on-Canton" claim):** sub-transaction privacy + observer roles inside ONE atomic multi-party transaction. Regulator sees compliance detail; counterparties see only their legs; outsiders see nothing — protocol-enforced. Demo via the role-switch UI we already built.
-- **Multilateral netting (N=3):** STRETCH polish only, if everything else is solid.
+## What's built (all working, all tested)
 
-## The big unblock: LOCAL DEV WORKS
+### Ledger (Daml) — `tradeguard/daml/TradeGuard/`
+- 8 modules, ~1,150 lines, modeled on daml-finance v4 (verified loadable on SDK 2.10.4)
+- Types, Holding (custody + lock/disclose), Instrument, Settlement (atomic N-leg
+  batch + SettlementAuthority delegation + SettledTrade audit record), Trade
+  (propose/accept/attest), Agent (recommendation + on-ledger human gate), Init,
+  Orchestrate
+- **11 Daml tests green**: happy path, privacy (outsider=None), atomicity rollback,
+  exception/cancel, attestation, reject
 
-Per Grok: **do not gate the demo on org whitelisting.** Build + test locally with simulated parties.
+### Agent (Python) — `agent/`
+- ledger_client (JSON API + per-party JWT, #tradeguard package-name refs)
+- reasoner (auditable SETTLE/WAIT/CANCEL decisions)
+- netting (multilateral netting; 5 unit tests pass; 80.6% netted in demo)
+- cli: status / watch / approve / reject / settle / net
+- Full loop verified live: monitor -> reason -> recommend -> HUMAN APPROVE -> atomic settle
 
-- Installed: openjdk@17 (brew, no sudo) + Daml SDK 2.10.4 (`~/.daml`)
-- PATH: `export PATH=$HOME/.daml/bin:/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home/bin:$PATH`
-- Local project: `~/Developer/canton-hackathon/daml-local/tradeguard-local`
-- `daml test` → **PASSES**: "ok, 3 active contracts, 5 transactions" — atomic DvP + privacy proof (outsider = None) with NO org access.
-- Org deploy is now a "config once whitelisted" bonus, not a blocker.
+### UI — `ui/`
+- live.html + ui_server.py: role switch = party-JWT switch; each view is a real
+  /v1/query. Buyer/seller/regulator/outsider verified live. Outsider sees nothing.
 
-### Version split (important)
-- **Local SDK = Daml 2.10.4** → uses `submitMulti [p1,p2] []`
-- **Seaport = Daml 3.4.11** → uses `submit (actAs p1 <> actAs p2)`
-- Keep both syntaxes straight when porting.
+### Tooling & docs
+- scripts/run_stack.sh (full stack up), scripts/demo.sh (full story), make_token.py,
+  linear_post.py (comments + screenshot upload — works)
+- README.md, ARCHITECTURE.md, DEMO.md (3-min pitch script)
 
-### Canton privacy gotcha found locally (the kind that eats days if found late)
-Buyer couldn't `fetch` the seller's `AssetHolding` inside `Accept` — buyer isn't an observer on it → "contract not visible to reading parties." Fix: added an `AssetHolding_Disclose` choice so the seller discloses the asset to the buyer before Accept. (With daml-finance, disclosure is handled by its settlement model — another reason to adopt it.)
+## How to run
+```bash
+source ~/.tg-env.sh
+scripts/run_stack.sh      # ledger 6865 + JSON API 7575 + UI 8080 + seed
+scripts/demo.sh           # full governed-agent story + live privacy proof
+open http://localhost:8080
+```
 
-## What's already built
-- 6 hi-fi UI screens + index walkthrough (`wireframes/`) — ledger/ink design, vision-verified
-- Lo-fi flow wireframes (`wireframes/tradeguard-lofi.html`)
-- Daml skeleton builds on Seaport (3.4.11) AND runs locally (2.10.4)
-- Research docs: CANTON_BUILD_BIBLE, FINANCE_GLOSSARY, DEFI_TO_TRADFI_JOURNEY, OPERATIONS
-- Linear board (team THE, THE-36..44); Encode project (JOIN CODE eae56e81)
+## Environment
+- JDK 17 (brew openjdk@17) + Daml SDK 2.10.4 (~/.daml); PATH in ~/.tg-env.sh
+- daml-finance v4 bundle vendored in vendor/
+- Local SDK = 2.x (submitMulti); Seaport = 3.4.11 (submit actAs) — port syntax when deploying
 
-## Next moves (in order)
-1. ✅ Verify local dev — DONE
-2. Pull daml-finance, get its DvP/settlement example building locally
-3. Re-base TradeGuard contracts on daml-finance Holdings/Instruments/Settlement
-4. Design + build the reasoning agent (the real differentiator)
-5. Wire the role-switch UI to read the local ledger (JSON Ledger API) for a live privacy demo
-6. (Stretch) N=3 netting
-7. Once Jatin whitelists: deploy to org DevNet (small config step)
+## Linear (team THE)
+- THE-36 Checkpoint 1 (Encode) DONE · THE-37 wallet DONE · THE-38 live stack DONE
+- THE-40 skeleton DONE · THE-41 atomic DvP DONE · THE-42 UI (live, screenshots) ·
+  THE-43 agent + netting DONE · THE-44 submission (pushed)
+- All milestones tracked with screenshots uploaded via scripts/linear_post.py
 
-## Failure modes to avoid (Grok)
-- Shipping tutorial DvP + thin agent wrapper → filtered early
-- Over-scoping netting → no working demo by deadline
-- Talking privacy but not SHOWING it in the demo
-- Shallow TradFi modeling (generic tokens vs real daml-finance)
-- Agent as gimmick (doesn't drive real ledger actions)
-- Death by toolchain (Daml paradigm + Seaport quirks eating days)
+## Remaining (optional / external)
+- Deploy DAR to Seaport DevNet org (needs Jatin to whitelist the Party ID) — config step
+- Optional: record a screen-capture of the demo for the submission
+- Optional: wire netting end-to-end on-ledger (algorithm + engine both exist; demo
+  currently shows the optimization, residuals reuse the proven SettlementBatch)
