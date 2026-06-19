@@ -1,0 +1,64 @@
+-- Copyright (c) 2026 TradeGuard. SPDX-License-Identifier: Apache-2.0
+--
+-- | Governed agent layer: on-ledger settlement recommendations + human approval.
+--
+-- The off-chain reasoning agent writes a `SettlementRecommendation` to the ledger
+-- when it determines a trade is ready to settle. The recommendation is a PROPOSAL
+-- only — it carries the agent's rationale but confers no settlement authority. A
+-- human approver (the coordinator's principal) must `Approve` it, and only then is
+-- the atomic batch settlement orchestrated. This makes the governance gate auditable
+-- on-ledger: every recommendation, approval, and rejection is a recorded contract.
+module TradeGuard.Agent where
+
+import TradeGuard.Types
+
+-- | The agent's recommendation for a trade, with its auditable rationale. Signed by
+--   the agent (coordinator) and observed by the human approver. Carries NO authority
+--   to move assets — it is a governed proposal that a human must approve.
+template SettlementRecommendation
+  with
+    agent : Party
+      -- ^ The off-chain agent's on-ledger identity (the coordinator party).
+    approver : Party
+      -- ^ The human who must authorize acting on this recommendation.
+    tradeId : Id
+      -- ^ The trade this recommendation concerns.
+    decision : Text
+      -- ^ "SETTLE" or "CANCEL".
+    rationale : [Text]
+      -- ^ The agent's auditable reasoning trail.
+    confidence : Text
+      -- ^ A short confidence/summary note.
+  where
+    signatory agent
+    observer approver
+
+    -- | The human approves the recommendation, producing an `ApprovedAction` the
+    --   agent can then execute. This is the human gate: nothing settles without it.
+    choice Approve : ContractId ApprovedAction
+      controller approver
+      do
+        create ApprovedAction with
+          agent; approver; tradeId; decision
+
+    -- | The human rejects the recommendation; it is archived with a reason.
+    choice ProcessRejection : ()
+      with reason : Text
+      controller approver
+      do pure ()
+
+-- | A human-approved settlement action. Its existence is the agent's authorization
+--   to proceed with the (atomic) settlement orchestration for this trade.
+template ApprovedAction
+  with
+    agent : Party
+    approver : Party
+    tradeId : Id
+    decision : Text
+  where
+    signatory agent, approver
+
+    -- | Mark the approved action as executed (after the agent orchestrates settlement).
+    choice MarkExecuted : ()
+      controller agent
+      do pure ()

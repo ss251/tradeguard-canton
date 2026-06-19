@@ -8,3 +8,5 @@ __pycache__/
 pkgid.txt
 tradeguard/log/
 agent/__pycache__/
+tradeguard-v3/**/.daml/
+tradeguard-v3/**/*.dar

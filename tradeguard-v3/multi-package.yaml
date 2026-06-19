@@ -1,0 +1,5 @@
+sdk-version: 3.4.11
+
+packages:
+- ./main
+- ./test

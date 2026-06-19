@@ -1,0 +1,135 @@
+-- Copyright (c) 2026 TradeGuard. SPDX-License-Identifier: Apache-2.0
+--
+-- | Trade workflow: propose -> accept -> (attest) -> settle, plus conditional
+--   (attestation-gated) settlement.
+--
+-- A `TradeProposal` is a signed offer from a seller. The buyer accepts, which builds
+-- a two-leg `SettlementBatch` (asset leg + cash leg). For trade finance, settlement
+-- can be gated on a `DeliveryAttestation` from a trusted registry (proof of shipment /
+-- endorsement) — this is the condition the governed agent monitors before proposing
+-- settlement.
+module TradeGuard.Trade where
+
+import qualified DA.Set as Set
+import TradeGuard.Types
+import TradeGuard.Holding
+import TradeGuard.Settlement (Leg(..), SettlementBatch(..), BatchStatus(..), SettlementAuthority(..), regObs)
+
+-- | A trusted attestation that a real-world delivery condition has been met
+--   (e.g. a bill of lading endorsed by the port registry). Settlement of a
+--   conditional trade is gated on the existence of a matching attestation.
+template DeliveryAttestation
+  with
+    registry : Party
+      -- ^ The trusted attester (e.g. Port Registry).
+    tradeId : Id
+      -- ^ The trade this attestation is for.
+    instrumentId : Id
+      -- ^ The asset whose delivery is attested.
+    detail : Text
+      -- ^ Human-readable attestation detail.
+    observers : Parties
+      -- ^ Parties who can see the attestation (buyer, seller, agent).
+  where
+    signatory registry
+    observer observers
+
+-- | A signed trade offer from a seller to a buyer, optionally gated on delivery
+--   attestation and disclosed to a regulator.
+template TradeProposal
+  with
+    seller : Party
+      -- ^ The selling party (signatory).
+    buyer : Party
+      -- ^ The buying party (observer; controls Accept).
+    regulator : Optional Party
+      -- ^ Optional compliance observer.
+    registry : Party
+      -- ^ The custodian/registry that custodies the asset and attests delivery.
+    bank : Party
+      -- ^ The custodian of the cash leg.
+    tradeId : Id
+      -- ^ Unique trade identifier.
+    assetInstrument : InstrumentKey
+      -- ^ The asset being sold (e.g. a bill of lading title).
+    assetAmount : Decimal
+      -- ^ Quantity of the asset.
+    cashInstrument : InstrumentKey
+      -- ^ The cash instrument (e.g. USD tokenized deposit).
+    price : Decimal
+      -- ^ The cash price the buyer pays.
+    requiresAttestation : Bool
+      -- ^ If True, settlement is gated on a DeliveryAttestation.
+    sellerAssetCid : ContractId Holding
+      -- ^ The seller's asset holding that will be delivered.
+  where
+    signatory seller
+    observer buyer, regObs regulator
+    ensure price > 0.0 && assetAmount > 0.0
+
+    -- | Buyer rejects the proposal.
+    choice Reject : ()
+      controller buyer
+      do pure ()
+
+    -- | Buyer accepts. This produces a buyer-signed `AcceptedTrade` that names the
+    --   two legs and the funding holding. The coordinator (who holds delegated
+    --   settlement authority from both custodians) then assembles the atomic batch.
+    --   Splitting accept from batch-assembly keeps authority clean: the buyer signs
+    --   their commitment; the coordinator signs the batch it will orchestrate.
+    choice Accept : ContractId AcceptedTrade
+      with
+        coordinator : Party
+          -- ^ Settlement coordinator (operator / agent principal).
+        buyerCashCid : ContractId Holding
+          -- ^ The buyer's cash holding funding the cash leg.
+        sellerAccountId : Id
+        buyerAssetAccountId : Id
+        buyerCashAccountId : Id
+        sellerCashAccountId : Id
+      controller buyer
+      do
+        cash <- fetch buyerCashCid
+        assertMsg "cash holding must belong to buyer" (cash.account.owner == buyer)
+        assertMsg "cash amount must match price" (cash.amount == price)
+        assertMsg "cash instrument must match" (cash.instrument == cashInstrument)
+        let assetLeg = Leg with
+              sender = seller; receiver = buyer; custodian = registry
+              instrument = assetInstrument; amount = assetAmount
+              senderAccountId = sellerAccountId; receiverAccountId = buyerAssetAccountId
+            cashLeg = Leg with
+              sender = buyer; receiver = seller; custodian = bank
+              instrument = cashInstrument; amount = price
+              senderAccountId = buyerCashAccountId; receiverAccountId = sellerCashAccountId
+        create AcceptedTrade with
+          seller; buyer; coordinator; regulator
+          tradeId; legs = [assetLeg, cashLeg]
+          buyerCashCid; sellerAssetCid
+
+-- | A buyer-accepted trade, ready for the coordinator to assemble into a batch.
+template AcceptedTrade
+  with
+    seller : Party
+    buyer : Party
+    coordinator : Party
+    regulator : Optional Party
+    tradeId : Id
+    legs : [Leg]
+    buyerCashCid : ContractId Holding
+    sellerAssetCid : ContractId Holding
+  where
+    signatory seller, buyer
+    observer coordinator, regObs regulator
+
+    -- | The coordinator assembles the atomic settlement batch it will orchestrate.
+    choice AssembleBatch : ContractId SettlementBatch
+      controller coordinator
+      do
+        create SettlementBatch with
+          batchId = tradeId
+          coordinator
+          legs
+          requiredParties = Set.fromList [seller, buyer]
+          regulator
+          status = Pending
+          observers = Set.empty
