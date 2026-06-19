@@ -64,6 +64,17 @@ python3 -m agent.cli net                 # multilateral netting demo
 open http://localhost:8080               # switch roles -> watch the privacy boundary
 ```
 
+### On the real Canton network (Canton Builder LocalNet)
+
+```bash
+# prereq: canton builder start  +  DAR deployed  (see ARCHITECTURE.md)
+scripts/demo_real.sh                     # full flow on a real 3-validator network
+
+# live UI against the real network (JSON API v2):
+TG_REAL=1 python3 ui/ui_server.py        # http://localhost:8080  (header shows "Canton LocalNet")
+TG_REAL=1 python3 -m agent.cli status    # agent reads the real ledger
+```
+
 ## Tests
 
 ```bash
