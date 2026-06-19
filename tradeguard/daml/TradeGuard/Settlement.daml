@@ -152,10 +152,15 @@ template SettlementBatch
               holdingCid = al.holdingCid
               newOwner = al.leg.receiver
               newAccountId = al.leg.receiverAccountId
+        now <- getTime
+        settledTradeCid <- create SettledTrade with
+          coordinator; batchId; parties = requiredParties; regulator
+          legCount = length newHoldings; settledAtLedgerTime = now
         pure SettlementResult with
           batchId
           settledHoldings = newHoldings
           legCount = length newHoldings
+          settledTradeCid
 
     -- | Cancel the batch and release all locks. Any required party or the coordinator
     --   can cancel before settlement (e.g. a condition was never met).
@@ -172,13 +177,31 @@ template SettlementBatch
           exercise hCid Release with actor = coordinator
         pure released
 
--- | Result of a successful atomic settlement.
+-- | Result of a successful atomic settlement (returned to the caller).
 data SettlementResult = SettlementResult
   with
     batchId : Id
     settledHoldings : [ContractId Holding]
     legCount : Int
+    settledTradeCid : ContractId SettledTrade
   deriving (Eq)
+
+-- | A durable, regulator-observable record of a completed settlement. This is what
+--   persists after the batch is consumed, providing an audit trail for oversight
+--   and the UI. Counterparties and the regulator can see it; outsiders cannot.
+template SettledTrade
+  with
+    coordinator : Party
+    batchId : Id
+    parties : Parties
+      -- ^ The counterparties (signatories of the settlement).
+    regulator : Optional Party
+      -- ^ Compliance observer.
+    legCount : Int
+    settledAtLedgerTime : Time
+  where
+    signatory coordinator
+    observer parties, regObs regulator
 
 -- | Regulator-as-observer helper.
 regObs : Optional Party -> Parties

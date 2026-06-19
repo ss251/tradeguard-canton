@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeGuard — Live Settlement Record</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{--paper:#f3efe6;--paper-edge:#e7e1d3;--ink:#1c1a17;--ink-soft:#6b6358;--rule:#cdc4b0;--oxblood:#7c2128;--seal-green:#2f5d46}
+  body{background:var(--paper);color:var(--ink);font-family:"Inter",sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased;
+    background-image:repeating-linear-gradient(0deg,transparent,transparent 31px,rgba(28,26,23,.03) 31px,rgba(28,26,23,.03) 32px);min-height:100vh}
+  .sheet{max-width:1100px;margin:0 auto;padding:0 40px}
+  .live{display:inline-flex;align-items:center;gap:7px;font-family:"IBM Plex Mono";font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--seal-green);margin-top:18px}
+  .live .dot{width:8px;height:8px;border-radius:50%;background:var(--seal-green);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .mast{display:flex;justify-content:space-between;align-items:flex-end;padding:10px 0 16px;border-bottom:2px solid var(--ink)}
+  .mast .mark{font-weight:700;font-size:13px;letter-spacing:.28em;text-transform:uppercase;color:var(--oxblood)}
+  .mast h1{font-family:"Newsreader",serif;font-weight:500;font-size:42px;letter-spacing:-.01em;line-height:1;margin-top:6px}
+  .mast .meta{text-align:right;font-family:"IBM Plex Mono";font-size:11px;color:var(--ink-soft);line-height:1.8}
+  .thesis{font-family:"Newsreader",serif;font-size:21px;font-style:italic;padding:22px 0 24px;max-width:70ch;color:var(--ink-soft)}
+  .thesis .em{font-style:normal;font-weight:600;border-bottom:2px solid var(--oxblood)}
+  .endorse{display:flex;border:1.5px solid var(--ink);margin-bottom:0}
+  .endorse button{flex:1;background:transparent;border:0;border-right:1px solid var(--rule);padding:13px 8px;cursor:pointer;font-family:"IBM Plex Mono";font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);transition:.12s}
+  .endorse button:last-child{border-right:0}
+  .endorse button .r{display:block;font-weight:600;font-size:12px;color:var(--ink);margin-bottom:2px}
+  .endorse button[aria-pressed=true]{background:var(--ink);color:var(--paper)}
+  .endorse button[aria-pressed=true] .r{color:var(--paper)}
+  .reading{font-family:"IBM Plex Mono";font-size:11px;color:var(--ink-soft);margin:12px 2px 18px}
+  .record{border:1.5px solid var(--ink);border-top:0;background:rgba(255,255,255,.35);min-height:220px}
+  .rec-band{display:flex;justify-content:space-between;align-items:center;padding:13px 22px;border-bottom:1px solid var(--rule);background:var(--paper-edge)}
+  .rec-band .id{font-family:"IBM Plex Mono";font-size:12px}.rec-band .id b{color:var(--oxblood)}
+  .stamp{font-family:"IBM Plex Mono";font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;padding:4px 11px;border:1.5px solid var(--seal-green);color:var(--seal-green)}
+  .holdings{padding:8px 0}
+  .hrow{display:grid;grid-template-columns:1fr auto;padding:16px 22px;border-bottom:1px solid var(--rule);align-items:center}
+  .hrow:last-child{border-bottom:0}
+  .hrow .name{font-family:"Newsreader",serif;font-size:22px}
+  .hrow .amt{font-family:"IBM Plex Mono";font-size:14px;color:var(--ink-soft)}
+  .hrow .tag{font-family:"IBM Plex Mono";font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--seal-green);margin-left:10px}
+  .void{padding:70px 24px;text-align:center;background:repeating-linear-gradient(135deg,var(--paper-edge),var(--paper-edge) 16px,var(--paper) 16px,var(--paper) 32px)}
+  .void .band{display:inline-block;background:var(--paper);border:1.5px solid var(--oxblood);padding:24px 38px}
+  .void .big{font-family:"Newsreader",serif;font-size:26px;color:var(--oxblood);font-weight:500}
+  .void .q{font-family:"IBM Plex Mono";font-size:12px;color:var(--ink-soft);margin-top:12px;line-height:1.7}
+  .void .q b{color:var(--ink)}
+  .agentbar{padding:14px 22px;border-top:1.5px solid var(--ink);background:var(--paper-edge);font-family:"IBM Plex Mono";font-size:11.5px;color:var(--ink-soft);display:flex;gap:12px;align-items:center}
+  .agentbar .tick{color:var(--seal-green);font-weight:600}
+  footer{font-family:"IBM Plex Mono";font-size:10.5px;color:var(--ink-soft);text-align:center;padding:24px 0 50px;letter-spacing:.03em}
+  .loading{padding:60px;text-align:center;font-family:"IBM Plex Mono";font-size:12px;color:var(--ink-soft)}
+</style>
+</head>
+<body>
+<div class="sheet">
+  <div class="live"><span class="dot"></span>Live · reading the Canton ledger over JSON API</div>
+  <div class="mast">
+    <div><div class="mark">TradeGuard · Canton</div><h1>Settlement Record</h1></div>
+    <div class="meta">INSTRUMENT &nbsp;<b id="m-inst">TG-LIVE-001</b><br>SOURCE &nbsp;localhost:7575<br>METHOD &nbsp;<b>Atomic DvP</b></div>
+  </div>
+  <p class="thesis">One settled trade. Four readers. Each query hits the <span class="em">same ledger</span> with a different party token — privacy is enforced by Canton, proven live.</p>
+
+  <div class="endorse" id="endorse" role="group" aria-label="Read as">
+    <button data-r="buyer" aria-pressed="true"><span class="r">Importer Co.</span>Buyer</button>
+    <button data-r="seller" aria-pressed="false"><span class="r">Exporter Ltd.</span>Seller</button>
+    <button data-r="regulator" aria-pressed="false"><span class="r">FCA</span>Regulator</button>
+    <button data-r="outsider" aria-pressed="false"><span class="r">Public</span>Outsider</button>
+  </div>
+  <div class="reading" id="reading">Querying ledger as the buyer…</div>
+  <div id="record"><div class="record"><div class="loading">loading live ledger data…</div></div></div>
+  <footer>Each role view is a real /v1/query against the Canton JSON Ledger API with that party's JWT. No mock data — sub-transaction privacy is the protocol's, not the UI's.</footer>
+</div>
+
+<script>
+const labels = {
+  buyer:"Reading as the buyer — your own holdings from the live ledger.",
+  seller:"Reading as the seller — your own holdings from the live ledger.",
+  regulator:"Reading as the regulator — oversight view from the live ledger.",
+  outsider:"Reading as an outsider — not a party to this trade."
+};
+
+async function load(role){
+  document.getElementById("reading").textContent = "Querying ledger as the " + role + "…";
+  const el = document.getElementById("record");
+  try {
+    const res = await fetch("/api/view?role=" + role);
+    const v = await res.json();
+    document.getElementById("reading").textContent = labels[role] + "  (party " + (v.party_short||"") + ")";
+    if (!v.sees_anything) {
+      el.innerHTML = `<div class="record"><div class="void"><div class="band">
+        <div class="big">No record disclosed</div>
+        <div class="q">You are not a stakeholder. The ledger returned <b>nothing</b> —<br>
+        ${v.holding_count} holdings, ${v.recommendation_count} recommendations visible to you.</div>
+      </div></div></div>`;
+      return;
+    }
+    const settled = v.sees_settlement || v.approved_count>0;
+    const rows = (v.holdings||[]).map(h => `
+      <div class="hrow">
+        <div><span class="name">${h.instrument}</span>${h.owner_is_me?'<span class="tag">yours</span>':''}</div>
+        <div class="amt">${h.amount}</div>
+      </div>`).join("");
+    el.innerHTML = `<div class="record">
+      <div class="rec-band">
+        <span class="id">INSTRUMENT <b>#TG-LIVE-001</b> · live holdings for this party</span>
+        <span class="stamp">${settled?'SETTLED':'ACTIVE'}</span>
+      </div>
+      <div class="holdings">${rows || '<div class="loading">no holdings visible</div>'}</div>
+      ${role==='buyer' ? `<div class="agentbar"><span class="tick">\u2713 agent + human</span>
+        <span>Settlement was recommended by the off-chain agent and authorized by a human before the ledger executed it atomically.</span></div>`:''}
+    </div>`;
+  } catch(e){
+    el.innerHTML = `<div class="record"><div class="loading">error: ${e.message}<br>is the UI bridge + sandbox running?</div></div>`;
+  }
+}
+const grp = document.getElementById("endorse");
+grp.addEventListener("click", e => {
+  const b = e.target.closest("button"); if(!b) return;
+  [...grp.children].forEach(x=>x.setAttribute("aria-pressed", x===b?"true":"false"));
+  load(b.dataset.r);
+});
+load("buyer");
+</script>
+</body>
+</html>

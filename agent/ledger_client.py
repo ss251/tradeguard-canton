@@ -57,8 +57,10 @@ class LedgerClient:
         self.token = make_token(self.party)
 
     def tid(self, module_entity: str) -> str:
-        """Fully-qualify a template id: '<pkgid>:Module:Entity'."""
-        return f"{self.pkgid}:{module_entity}"
+        """Fully-qualify a template id. We use the package-NAME reference
+        ('#tradeguard:Module:Entity'), which the JSON API resolves to the latest
+        uploaded package — so it survives DAR rebuilds (no pkgid churn)."""
+        return f"#tradeguard:{module_entity}"
 
     def _post(self, path: str, body: dict) -> dict:
         req = urllib.request.Request(
