@@ -173,6 +173,38 @@ def cmd_settle(trade_id: str = "TG-LIVE-001") -> None:
             print("  " + l[:160])
 
 
+def cmd_net() -> None:
+    """Demonstrate multilateral netting over a realistic multi-party book.
+
+    Shows the settlement-optimization the agent performs BEFORE settling: net a set
+    of bilateral obligations down to minimal residual transfers, then those residuals
+    would settle atomically as one SettlementBatch.
+    """
+    from .netting import Obligation, netting_report
+    # A realistic trade-finance circle: 3 firms with criss-crossing obligations.
+    book = [
+        Obligation("Importer Co.", "Exporter Ltd.", 100_000),
+        Obligation("Exporter Ltd.", "Logistics SA", 100_000),
+        Obligation("Logistics SA", "Importer Co.", 80_000),
+        Obligation("Importer Co.", "Logistics SA", 50_000),
+        Obligation("Logistics SA", "Exporter Ltd.", 30_000),
+    ]
+    rep = netting_report(book, instrument="USD")
+    print("=== TradeGuard multilateral netting (agent optimization) ===")
+    print(f"  gross: {rep['gross_obligations']} obligations, "
+          f"{rep['gross_value']:,.0f} USD total")
+    print("  net positions:")
+    for p, v in rep["net_positions"].items():
+        sign = "receives" if v > 0 else ("pays" if v < 0 else "flat")
+        print(f"     {p:16s} {sign:8s} {abs(v):>10,.0f} USD")
+    print(f"  residual transfers ({rep['residual_count']}, vs {rep['gross_obligations']} gross):")
+    for t in rep["residual_transfers"]:
+        print(f"     {t['sender']:16s} -> {t['receiver']:16s} {t['amount']:>10,.0f} USD")
+    print(f"  >> {rep['netting_efficiency_pct']}% of gross value netted out "
+          f"({rep['value_netted_out']:,.0f} of {rep['gross_value']:,.0f} USD)")
+    print("  >> residuals settle atomically as ONE SettlementBatch (all-or-nothing)")
+
+
 def _trade_id(idval) -> str:
     if isinstance(idval, dict):
         return str(idval.get("unpack", idval))
@@ -194,6 +226,8 @@ def main(argv: list[str]) -> None:
         cmd_reject(argv[1], argv[2] if len(argv) > 2 else "rejected")
     elif cmd == "settle":
         cmd_settle(argv[1] if len(argv) > 1 else "TG-LIVE-001")
+    elif cmd == "net":
+        cmd_net()
     else:
         print("unknown command:", cmd)
         print(__doc__)

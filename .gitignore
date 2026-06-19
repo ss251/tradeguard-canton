@@ -6,3 +6,5 @@ vendor/*.tar.gz
 __pycache__/
 *.pyc
 pkgid.txt
+tradeguard/log/
+agent/__pycache__/
