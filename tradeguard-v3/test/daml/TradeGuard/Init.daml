@@ -11,6 +11,8 @@
 module TradeGuard.Init where
 
 import DA.Optional (fromOptional)
+import DA.List (find)
+import DA.Text (splitOn)
 import qualified DA.Set as Set
 import Daml.Script
 import TradeGuard.Types
@@ -38,10 +40,15 @@ data InitResult = InitResult
   deriving (Eq, Show)
 
 -- | Get-or-allocate a party by hint (idempotent across re-runs on the same ledger).
+--   Canton 3.x: PartyDetails has no displayName, so we match on the party id prefix
+--   (allocatePartyWithHint puts the hint before the '::' namespace separator).
 getOrAllocate : Text -> Script Party
 getOrAllocate hint = do
   existing <- listKnownParties
-  let match = filter (\d -> optional False (== hint) d.displayName) existing
+  let hasHint d = case splitOn "::" (partyToText d.party) of
+        (prefix :: _) -> prefix == hint
+        [] -> False
+      match = filter hasHint existing
   case match of
     (d :: _) -> pure d.party
     [] -> allocatePartyWithHint hint (PartyIdHint hint)
@@ -65,20 +72,20 @@ initLedger = do
         depository = registry; issuer = registry; id = Id "BillOfLading-7741"; version = "1"
         holdingStandard = Transferable
 
-  -- register instruments (idempotent: skip if the key already exists)
-  let cashKey = InstrumentKey with depository = bank; issuer = bank; id = Id "USD"; version = "1"; holdingStandard = TransferableFungible
-      assetKey = InstrumentKey with depository = registry; issuer = registry; id = Id "BillOfLading-7741"; version = "1"; holdingStandard = Transferable
-  existingCash <- queryContractKey @Instrument bank cashKey
-  cashI <- case existingCash of
-    Some (cid, _) -> pure cid
+  -- register instruments (idempotent: skip if one with the same id already exists)
+  allInstrs <- query @Instrument bank
+  let findInstr iid = fst <$> find (\(_, i) -> i.id == iid) allInstrs
+  cashI <- case findInstr (Id "USD") of
+    Some cid -> pure cid
     None -> submit bank do
       createCmd Instrument with
         depository = bank; issuer = bank; id = Id "USD"; version = "1"
         holdingStandard = TransferableFungible
         description = "US Dollar tokenized deposit"; observers = Set.empty
-  existingAsset <- queryContractKey @Instrument registry assetKey
-  assetI <- case existingAsset of
-    Some (cid, _) -> pure cid
+  allInstrsR <- query @Instrument registry
+  let findInstrR iid = fst <$> find (\(_, i) -> i.id == iid) allInstrsR
+  assetI <- case findInstrR (Id "BillOfLading-7741") of
+    Some cid -> pure cid
     None -> submit registry do
       createCmd Instrument with
         depository = registry; issuer = registry; id = Id "BillOfLading-7741"; version = "1"
@@ -87,9 +94,9 @@ initLedger = do
 
   -- accounts (idempotent)
   let mkAcct cust own accId = do
-        let k = AccountKey with custodian = cust; owner = own; id = Id accId
-        existing <- queryContractKey @Account cust k
-        case existing of
+        existing <- query @Account cust
+        let match = find (\(_, a) -> a.custodian == cust && a.owner == own && a.id == Id accId) existing
+        case match of
           Some _ -> pure ()
           None -> do
             _ <- submitMulti [cust, own] [] do
@@ -108,8 +115,9 @@ initLedger = do
 
   -- custodians grant settlement authority to the coordinator (idempotent)
   let mkAuth cust = do
-        existing <- queryContractKey @SettlementAuthority cust (cust, coordinator)
-        case existing of
+        existing <- query @SettlementAuthority cust
+        let match = find (\(_, a) -> a.custodian == cust && a.coordinator == coordinator) existing
+        case match of
           Some _ -> pure ()
           None -> do
             _ <- submit cust do createCmd SettlementAuthority with custodian = cust; coordinator

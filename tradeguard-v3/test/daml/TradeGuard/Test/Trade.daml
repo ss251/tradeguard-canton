@@ -79,6 +79,8 @@ runHappyPath = do
   cashLocked <- submitMulti [w.bank, w.buyer] [] do
     exerciseCmd cashH LockHolding with locker = w.coordinator; context = "TG-0042"
 
+  assetAuth <- findAuth w.registry w.coordinator
+  cashAuth <- findAuth w.bank w.coordinator
   let assetLeg = Leg with
         sender = w.seller; receiver = w.buyer; custodian = w.registry
         instrument = w.assetInstrument; amount = 1.0
@@ -87,8 +89,8 @@ runHappyPath = do
         sender = w.buyer; receiver = w.seller; custodian = w.bank
         instrument = w.cashInstrument; amount = 100.0
         senderAccountId = Id "buyer-cash"; receiverAccountId = Id "seller-cash"
-      allocs = [ AllocatedLeg with leg = assetLeg; holdingCid = assetLocked
-               , AllocatedLeg with leg = cashLeg; holdingCid = cashLocked ]
+      allocs = [ AllocatedLeg with leg = assetLeg; holdingCid = assetLocked; authorityCid = assetAuth
+               , AllocatedLeg with leg = cashLeg; holdingCid = cashLocked; authorityCid = cashAuth ]
 
   -- allocate then settle atomically (coordinator + required parties authorize)
   batchAlloc <- submit w.coordinator do
@@ -164,6 +166,8 @@ testAtomicityRollback = do
     exerciseCmd assetH LockHolding with locker = w.coordinator; context = "TG-0043"
   cashLocked <- submitMulti [w.bank, w.buyer] [] do
     exerciseCmd cashH LockHolding with locker = w.coordinator; context = "TG-0043"
+  assetAuth <- findAuth w.registry w.coordinator
+  cashAuth <- findAuth w.bank w.coordinator
   let assetLeg = Leg with
         sender = w.seller; receiver = w.buyer; custodian = w.registry
         instrument = w.assetInstrument; amount = 1.0
@@ -172,8 +176,8 @@ testAtomicityRollback = do
         sender = w.buyer; receiver = w.seller; custodian = w.bank
         instrument = w.cashInstrument; amount = 100.0
         senderAccountId = Id "buyer-cash"; receiverAccountId = Id "seller-cash"
-      allocs = [ AllocatedLeg with leg = assetLeg; holdingCid = assetLocked
-               , AllocatedLeg with leg = cashLeg; holdingCid = cashLocked ]
+      allocs = [ AllocatedLeg with leg = assetLeg; holdingCid = assetLocked; authorityCid = assetAuth
+               , AllocatedLeg with leg = cashLeg; holdingCid = cashLocked; authorityCid = cashAuth ]
   batchAlloc <- submit w.coordinator do
     exerciseCmd batch Allocate with allocations = allocs
   -- attempt to settle WITHOUT the buyer's authorization -> must fail (authorization)

@@ -2,6 +2,8 @@ sdk-version: 3.4.11
 name: tradeguard-test
 source: daml
 version: 1.0.0
+build-options:
+  - --target=2.1
 dependencies:
   - daml-prim
   - daml-stdlib

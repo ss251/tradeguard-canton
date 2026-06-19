@@ -81,3 +81,12 @@ grantSettlementAuthority : Party -> Party -> Script (ContractId SettlementAuthor
 grantSettlementAuthority custodian coordinator =
   submit custodian do
     createCmd SettlementAuthority with custodian; coordinator
+
+-- | Look up the SettlementAuthority a custodian granted to the coordinator (by
+--   query, not key — Canton 3.x keyless). Used to populate AllocatedLeg.authorityCid.
+findAuth : Party -> Party -> Script (ContractId SettlementAuthority)
+findAuth custodian coordinator = do
+  auths <- query @SettlementAuthority custodian
+  case filter (\(_, a) -> a.custodian == custodian && a.coordinator == coordinator) auths of
+    ((cid, _) :: _) -> pure cid
+    [] -> abort "no SettlementAuthority found"

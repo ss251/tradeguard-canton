@@ -11,6 +11,7 @@ module TradeGuard.Orchestrate where
 
 import DA.Optional (fromSome)
 import DA.List (head)
+import DA.Text (splitOn)
 import DA.Foldable (forA_)
 import qualified DA.Set as Set
 import Daml.Script
@@ -66,8 +67,11 @@ orchestrateSettlement tradeIdText = do
   cashLocked <- submitMulti [bank, buyer] [] do
     exerciseCmd cashHCid LockHolding with locker = coordinator; context = tradeIdText
 
-  let allocs = [ AllocatedLeg with leg = assetLeg; holdingCid = assetLocked
-               , AllocatedLeg with leg = cashLeg; holdingCid = cashLocked ]
+  -- find each custodian's settlement-authority contract (by ContractId, no keys)
+  assetAuth <- findAuthority registry coordinator
+  cashAuth <- findAuthority bank coordinator
+  let allocs = [ AllocatedLeg with leg = assetLeg; holdingCid = assetLocked; authorityCid = assetAuth
+               , AllocatedLeg with leg = cashLeg; holdingCid = cashLocked; authorityCid = cashAuth ]
 
   -- 5. Allocate then settle atomically.
   batchAlloc <- submit coordinator do
@@ -85,10 +89,12 @@ orchestrateSettlement tradeIdText = do
 orchestrateLive : Script SettlementResult
 orchestrateLive = orchestrateSettlement "TG-LIVE-001"
 
--- | Find a party by display name from listKnownParties.
+-- | Find a party by id-prefix hint from listKnownParties (Canton 3.x: no displayName).
 findParty : Text -> [PartyDetails] -> Optional Party
 findParty n details =
-  case filter (\d -> optional False (== n) d.displayName) details of
+  case filter (\d -> case splitOn "::" (partyToText d.party) of
+                       (prefix :: _) -> prefix == n
+                       [] -> False) details of
     (d :: _) -> Some d.party
     [] -> None
 
@@ -104,3 +110,13 @@ findHolding custodian owner instr = do
   case match of
     ((cid, _) :: _) -> pure cid
     [] -> abort ("no unlocked holding for owner " <> show owner)
+
+-- | Find a custodian's SettlementAuthority delegation to the coordinator (by query,
+--   not by key — Canton 3.x keyless).
+findAuthority : Party -> Party -> Script (ContractId SettlementAuthority)
+findAuthority custodian coordinator = do
+  auths <- query @SettlementAuthority custodian
+  let match = filter (\(_, a) -> a.custodian == custodian && a.coordinator == coordinator) auths
+  case match of
+    ((cid, _) :: _) -> pure cid
+    [] -> abort ("no SettlementAuthority from custodian " <> show custodian)
