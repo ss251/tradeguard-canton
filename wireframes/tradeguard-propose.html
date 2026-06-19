@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeGuard — Draft Proposal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --paper:#f3efe6; --paper-edge:#e7e1d3; --ink:#1c1a17; --ink-soft:#6b6358;
+    --rule:#cdc4b0; --oxblood:#7c2128; --seal-green:#2f5d46; --field:#fbfaf6;
+  }
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--paper); color:var(--ink); font-family:"Inter",sans-serif;
+    line-height:1.5; -webkit-font-smoothing:antialiased;
+    background-image:repeating-linear-gradient(0deg, transparent, transparent 31px, rgba(28,26,23,.03) 31px, rgba(28,26,23,.03) 32px);
+    min-height:100vh;
+  }
+  .sheet{max-width:1180px;margin:0 auto;padding:0 40px}
+
+  /* stepper */
+  .steps{display:flex;align-items:center;gap:0;padding:28px 0 0;font-family:"IBM Plex Mono";font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+  .steps .s{color:var(--ink-soft);display:flex;align-items:center;gap:8px}
+  .steps .s .n{width:20px;height:20px;border:1.5px solid var(--rule);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--ink-soft)}
+  .steps .s.active{color:var(--ink)}
+  .steps .s.active .n{border-color:var(--oxblood);color:var(--oxblood);font-weight:600}
+  .steps .sep{flex:1;height:1px;background:var(--rule);margin:0 14px;min-width:24px;max-width:60px}
+
+  .mast{display:flex;justify-content:space-between;align-items:flex-end;padding:22px 0 16px;border-bottom:2px solid var(--ink)}
+  .mast .mark{font-weight:700;font-size:13px;letter-spacing:.28em;text-transform:uppercase;color:var(--oxblood)}
+  .mast h1{font-family:"Newsreader",serif;font-weight:500;font-size:42px;letter-spacing:-.01em;line-height:1;margin-top:6px}
+  .mast .by{text-align:right;font-family:"IBM Plex Mono";font-size:11px;color:var(--ink-soft);line-height:1.8}
+  .mast .by b{color:var(--ink)}
+
+  .thesis{font-family:"Newsreader",serif;font-size:21px;font-style:italic;padding:22px 0 26px;max-width:68ch;color:var(--ink-soft)}
+
+  /* two columns: form + live instrument */
+  .grid{display:grid;grid-template-columns:1fr 420px;gap:0;border:1.5px solid var(--ink)}
+
+  /* form column */
+  .form{padding:0}
+  .fsec{padding:22px 26px;border-bottom:1px solid var(--rule)}
+  .fsec:last-child{border-bottom:0}
+  .fsec .h{font-family:"IBM Plex Mono";font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:14px;display:flex;align-items:center;gap:10px}
+  .fsec .h .step{width:18px;height:18px;border-radius:50%;background:var(--ink);color:var(--paper);font-size:10px;display:flex;align-items:center;justify-content:center;font-weight:600}
+  label.lab{display:block;font-size:12px;color:var(--ink-soft);margin:0 0 6px}
+  .ctl{width:100%;background:var(--field);border:1.5px solid var(--rule);border-radius:3px;padding:11px 13px;font-family:"IBM Plex Mono";font-size:13px;color:var(--ink);transition:border-color .12s}
+  .ctl:focus{outline:0;border-color:var(--ink)}
+  select.ctl{appearance:none;cursor:pointer;background-image:linear-gradient(45deg,transparent 50%,var(--ink-soft) 50%),linear-gradient(135deg,var(--ink-soft) 50%,transparent 50%);background-position:calc(100% - 18px) 16px,calc(100% - 13px) 16px;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+  .two{display:grid;grid-template-columns:2fr 1fr;gap:12px}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .help{font-family:"IBM Plex Mono";font-size:10.5px;color:var(--ink-soft);margin-top:7px;line-height:1.5}
+
+  /* disclosure picker — the privacy decision, made prominent */
+  .disc{background:var(--ink);color:var(--paper);margin:0 -26px -22px;padding:22px 26px;border-top:1.5px solid var(--ink)}
+  .disc .h{color:#9a9183}
+  .disc .h .step{background:var(--oxblood)}
+  .party-pick{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid rgba(243,239,230,.18);border-radius:3px;margin-bottom:10px;font-family:"IBM Plex Mono";font-size:12.5px}
+  .party-pick .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .pd-buyer{background:#7fb3e0}.pd-reg{background:#e0c068}
+  .party-pick .role{color:#9a9183;margin-left:auto;text-transform:uppercase;font-size:10px;letter-spacing:.1em}
+  .party-pick .role b{color:#e8a3a8}
+  .disc .note{font-family:"IBM Plex Mono";font-size:10.5px;color:#9a9183;line-height:1.6;margin-top:4px}
+  .disc .note b{color:var(--paper)}
+
+  /* live instrument preview column */
+  .preview{background:var(--paper-edge);padding:0;display:flex;flex-direction:column;border-left:1px solid var(--rule)}
+  .pv-head{padding:16px 22px;border-bottom:1px solid var(--rule);display:flex;justify-content:space-between;align-items:center}
+  .pv-head .t{font-family:"IBM Plex Mono";font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft)}
+  .pv-head .draft{font-family:"IBM Plex Mono";font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--oxblood);border:1.5px solid var(--oxblood);padding:3px 9px;transform:rotate(-2deg)}
+  .pv-body{padding:24px 22px;flex:1}
+  .pv-title{font-family:"Newsreader",serif;font-size:22px;font-weight:500;line-height:1.15;margin-bottom:4px}
+  .pv-sub{font-family:"IBM Plex Mono";font-size:11px;color:var(--ink-soft);margin-bottom:22px}
+  .pv-legs{border:1px solid var(--rule);background:var(--field)}
+  .pv-leg{padding:15px 16px}
+  .pv-leg .c{font-family:"IBM Plex Mono";font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:5px}
+  .pv-leg .v{font-family:"Newsreader",serif;font-size:24px;font-weight:500}
+  .pv-leg .v.empty{color:var(--rule);font-style:italic;font-size:18px}
+  .pv-hinge{display:flex;align-items:center;gap:12px;padding:11px 16px;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);background:var(--paper-edge)}
+  .pv-hinge .ring{width:28px;height:28px;border-radius:50%;border:1.5px solid var(--oxblood);display:flex;align-items:center;justify-content:center;color:var(--oxblood);font-family:"Newsreader",serif;font-size:15px;flex:none}
+  .pv-hinge .lab{font-family:"IBM Plex Mono";font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--oxblood);font-weight:600}
+  .pv-meta{margin-top:18px;font-family:"IBM Plex Mono";font-size:11px}
+  .pv-meta .m{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px dotted var(--rule);color:var(--ink-soft)}
+  .pv-meta .m b{color:var(--ink)}
+  .pv-meta .m .empty{color:var(--rule);font-style:italic}
+
+  .actions{display:flex;justify-content:flex-end;gap:12px;align-items:center;padding:18px 22px;border-top:1.5px solid var(--ink);background:var(--paper-edge)}
+  .actions .warn{margin-right:auto;font-family:"IBM Plex Mono";font-size:10.5px;color:var(--oxblood)}
+  .btn{font-family:"Inter";font-weight:600;font-size:13px;padding:11px 20px;border-radius:3px;cursor:pointer;border:1.5px solid var(--ink);background:var(--paper);color:var(--ink);transition:.12s}
+  .btn.primary{background:var(--ink);color:var(--paper)}
+  .btn.primary:hover{background:var(--oxblood);border-color:var(--oxblood)}
+  .btn:focus-visible{outline:2px solid var(--oxblood);outline-offset:2px}
+
+  footer{font-family:"IBM Plex Mono";font-size:10.5px;color:var(--ink-soft);text-align:center;padding:26px 0 50px;letter-spacing:.03em}
+
+  @media (max-width:880px){
+    .sheet{padding:0 20px}.grid{grid-template-columns:1fr}
+    .preview{border-left:0;border-top:1px solid var(--rule)}
+    .mast h1{font-size:32px}.two,.row2{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="steps">
+    <div class="s active"><span class="n">1</span>Draft</div><div class="sep"></div>
+    <div class="s"><span class="n">2</span>Accept</div><div class="sep"></div>
+    <div class="s"><span class="n">3</span>Authorize</div><div class="sep"></div>
+    <div class="s"><span class="n">4</span>Settle</div>
+  </div>
+
+  <div class="mast">
+    <div><div class="mark">TradeGuard · Canton</div><h1>Draft Proposal</h1></div>
+    <div class="by">DRAFTING AS<br><b>Exporter Ltd.</b> · Seller<br>party ····7c30</div>
+  </div>
+
+  <p class="thesis">Compose the trade you'll sign. Who you name as observer is who can ever see it — that choice is the privacy model.</p>
+
+  <div class="grid">
+    <!-- FORM -->
+    <div class="form">
+      <div class="fsec">
+        <div class="h"><span class="step">1</span>Asset leg — what you deliver</div>
+        <label class="lab">Asset holding</label>
+        <select class="ctl" id="asset">
+          <option value="Bill of Lading 7741|maritime cargo title · 1 unit">Bill of Lading 7741 — maritime cargo title</option>
+          <option value="Warehouse Receipt 0192|bonded goods · 1 unit">Warehouse Receipt 0192 — bonded goods</option>
+          <option value="Invoice 8830|receivable · net-90">Invoice 8830 — receivable, net-90</option>
+        </select>
+        <div class="help">Pulled from AssetHolding contracts you own. Title transfers only on atomic settlement.</div>
+      </div>
+
+      <div class="fsec">
+        <div class="h"><span class="step">2</span>Cash leg — what you receive</div>
+        <div class="two">
+          <div><label class="lab">Price</label><input class="ctl" id="price" value="100,000" inputmode="decimal"></div>
+          <div><label class="lab">Currency</label>
+            <select class="ctl" id="ccy"><option>USD</option><option>EUR</option><option>GBP</option></select>
+          </div>
+        </div>
+        <div class="help">Settles as a tokenized deposit from the buyer's bank at the moment both legs clear.</div>
+      </div>
+
+      <div class="fsec">
+        <div class="h disc-inline"><span class="step">3</span>Counterparty</div>
+        <label class="lab">Buyer</label>
+        <select class="ctl" id="buyer">
+          <option>Importer Co.</option><option>Acme Supply</option><option>Global Freight</option>
+        </select>
+      </div>
+
+      <!-- disclosure: the privacy decision, dark + prominent -->
+      <div class="fsec">
+        <div class="disc">
+          <div class="h"><span class="step">4</span>Disclosure — who can ever see this</div>
+          <div class="party-pick"><span class="dot pd-buyer"></span> Importer Co. <span class="role"><b>signatory + observer</b></span></div>
+          <div class="party-pick"><span class="dot pd-reg"></span>
+            <select class="ctl" id="reg" style="background:transparent;border:0;color:var(--paper);padding:0;font-size:12.5px;width:auto">
+              <option style="color:#1c1a17">FCA (UK)</option>
+              <option style="color:#1c1a17">No regulator</option>
+              <option style="color:#1c1a17">ECB</option>
+            </select>
+            <span class="role">observer</span>
+          </div>
+          <div class="note">Everyone else — competitors, the public, other validators — sees <b>nothing</b>. Not the price, not that this trade exists. This is set here, enforced by Canton.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- LIVE INSTRUMENT PREVIEW -->
+    <div class="preview">
+      <div class="pv-head"><span class="t">Instrument preview</span><span class="draft">Unsigned draft</span></div>
+      <div class="pv-body">
+        <div class="pv-title">Trade Proposal</div>
+        <div class="pv-sub" id="pv-parties">Exporter Ltd. → Importer Co.</div>
+        <div class="pv-legs">
+          <div class="pv-leg"><div class="c">Asset leg — delivered</div><div class="v" id="pv-asset">Bill of Lading 7741</div></div>
+          <div class="pv-hinge"><span class="ring">⇄</span><span class="lab">Atomic DvP — both legs or neither</span></div>
+          <div class="pv-leg"><div class="c">Cash leg — received</div><div class="v" id="pv-cash">$100,000 USD</div></div>
+        </div>
+        <div class="pv-meta">
+          <div class="m"><span>Settlement</span><b>atomic — both legs or neither</b></div>
+          <div class="m"><span>Observer</span><b id="pv-reg">FCA (UK)</b></div>
+          <div class="m"><span>Visible to public</span><b style="color:var(--oxblood)">never</b></div>
+        </div>
+      </div>
+      <div class="actions">
+        <span class="warn" id="warn"></span>
+        <button class="btn">Save draft</button>
+        <button class="btn primary" id="send">Sign &amp; Send →</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>Signing creates a TradeProposal contract on Canton: seller = signatory, buyer = observer (controls Accept), regulator = observer on the settled trade. Non-parties never receive it.</footer>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+function sync(){
+  const [asset] = $("asset").value.split("|");
+  const price = $("price").value.trim();
+  const ccy = $("ccy").value;
+  const buyer = $("buyer").value;
+  const reg = $("reg").value;
+  $("pv-asset").textContent = asset;
+  $("pv-cash").textContent = price ? `$${price} ${ccy}` : "—";
+  $("pv-parties").textContent = `Exporter Ltd. → ${buyer}`;
+  $("pv-reg").textContent = reg;
+  // tiny validation surfacing, in the interface's voice
+  $("warn").textContent = price ? "" : "Enter a price to sign.";
+  $("send").disabled = !price;
+  $("send").style.opacity = price ? "1" : ".5";
+}
+["asset","price","ccy","buyer","reg"].forEach(id=>{
+  $(id).addEventListener("input", sync); $(id).addEventListener("change", sync);
+});
+$("send").addEventListener("click", ()=>{
+  $("send").textContent = "Signed ✓";
+  $("send").style.background = "var(--seal-green)";
+  $("send").style.borderColor = "var(--seal-green)";
+});
+sync();
+</script>
+</body>
+</html>

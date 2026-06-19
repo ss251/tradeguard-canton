@@ -1,0 +1,131 @@
+module Main where
+
+import Daml.Script
+
+-- TradeGuard local proof: bilateral atomic DvP + sub-transaction privacy.
+-- Daml 2.10.4 compatible (submitMulti works here, unlike 3.x).
+-- Goal of THIS file: prove we can build + run a multi-party privacy demo
+-- LOCALLY with simulated parties, with NO org/validator access.
+
+template AssetHolding
+  with
+    issuer : Party
+    owner : Party
+    assetId : Text
+    quantity : Decimal
+    viewers : [Party]
+  where
+    signatory issuer, owner
+    observer viewers
+    ensure quantity > 0.0
+    choice AssetHolding_Transfer : ContractId AssetHolding
+      with newOwner : Party
+      controller owner, newOwner
+      do create this with owner = newOwner, viewers = []
+    choice AssetHolding_Disclose : ContractId AssetHolding
+      with viewer : Party
+      controller owner
+      do create this with viewers = viewer :: viewers
+
+template CashHolding
+  with
+    issuer : Party
+    owner : Party
+    ccy : Text
+    amount : Decimal
+  where
+    signatory issuer, owner
+    ensure amount > 0.0
+    choice CashHolding_Transfer : ContractId CashHolding
+      with newOwner : Party
+      controller owner, newOwner
+      do create this with owner = newOwner
+
+template TradeProposal
+  with
+    seller : Party
+    buyer : Party
+    regulator : Party
+    assetCid : ContractId AssetHolding
+    price : Decimal
+    ccy : Text
+  where
+    signatory seller
+    observer buyer
+    ensure price > 0.0
+    choice Accept : ContractId Trade
+      with cashCid : ContractId CashHolding
+      controller buyer
+      do
+        asset <- fetch assetCid
+        cash <- fetch cashCid
+        assertMsg "asset must belong to seller" (asset.owner == seller)
+        assertMsg "cash must belong to buyer" (cash.owner == buyer)
+        assertMsg "payment must match price" (cash.amount == price && cash.ccy == ccy)
+        newAssetCid <- exercise assetCid AssetHolding_Transfer with newOwner = buyer
+        newCashCid <- exercise cashCid CashHolding_Transfer with newOwner = seller
+        create Trade with
+          seller; buyer; regulator
+          assetId = asset.assetId
+          quantity = asset.quantity
+          price; ccy
+          settledAsset = newAssetCid
+          settledCash = newCashCid
+
+template Trade
+  with
+    seller : Party
+    buyer : Party
+    regulator : Party
+    assetId : Text
+    quantity : Decimal
+    price : Decimal
+    ccy : Text
+    settledAsset : ContractId AssetHolding
+    settledCash : ContractId CashHolding
+  where
+    signatory seller, buyer
+    observer regulator
+
+-- The local multi-party proof. Run with: daml test
+setup : Script ()
+setup = script do
+  seller <- allocateParty "Seller"
+  buyer <- allocateParty "Buyer"
+  regulator <- allocateParty "Regulator"
+  bank <- allocateParty "Bank"
+  registry <- allocateParty "Registry"
+  outsider <- allocateParty "Outsider"
+
+  assetCid0 <- submitMulti [registry, seller] [] do
+    createCmd AssetHolding with
+      issuer = registry; owner = seller
+      assetId = "BillOfLading-7741"; quantity = 1.0
+      viewers = []
+
+  -- seller discloses the asset to the buyer so Accept can fetch it
+  -- (Canton privacy: buyer can't see what they're not an observer on)
+  assetCid <- submit seller do
+    exerciseCmd assetCid0 AssetHolding_Disclose with viewer = buyer
+
+  cashCid <- submitMulti [bank, buyer] [] do
+    createCmd CashHolding with
+      issuer = bank; owner = buyer
+      ccy = "USD"; amount = 100.0
+
+  propCid <- submit seller do
+    createCmd TradeProposal with
+      seller; buyer; regulator; assetCid
+      price = 100.0; ccy = "USD"
+
+  tradeCid <- submit buyer do
+    exerciseCmd propCid Accept with cashCid
+
+  -- PRIVACY PROOF — the only-on-Canton centerpiece, proven locally:
+  Some _ <- queryContractId seller tradeCid     -- seller sees it
+  Some _ <- queryContractId buyer tradeCid       -- buyer sees it
+  Some _ <- queryContractId regulator tradeCid   -- regulator (observer) sees it
+  None <- queryContractId outsider tradeCid       -- OUTSIDER SEES NOTHING
+
+  debug "TradeGuard local proof PASSED: atomic DvP settled + privacy enforced (outsider = None)"
+  pure ()

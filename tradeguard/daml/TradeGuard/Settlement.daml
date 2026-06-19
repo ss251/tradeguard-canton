@@ -1,0 +1,186 @@
+-- Copyright (c) 2026 TradeGuard. SPDX-License-Identifier: Apache-2.0
+--
+-- | Settlement engine: atomic multi-leg settlement with lock-then-swap.
+--
+-- This is the heart of TradeGuard. A `SettlementBatch` groups one or more
+-- `Instruction`s (each instruction moves one holding from a sender to a receiver).
+-- The batch settles **atomically**: every instruction's holding is locked up front,
+-- then all legs are swapped inside a single transaction. If any leg cannot settle,
+-- the whole transaction rolls back — there is no partial / half-settled state.
+--
+-- This is the only-on-Canton property: a multi-party atomic swap where each party
+-- only sees the legs they are a stakeholder in (sub-transaction privacy), with an
+-- optional regulator observer for selective disclosure.
+module TradeGuard.Settlement where
+
+import qualified DA.Set as Set
+import DA.Foldable (forA_)
+import DA.Optional (isSome)
+import TradeGuard.Types
+import TradeGuard.Holding
+
+-- | A single settlement instruction: move `quantity` of an instrument from the
+--   current holder (sender) to a receiver, within a custodian.
+data Leg = Leg
+  with
+    sender : Party
+      -- ^ Current owner of the holding to be moved.
+    receiver : Party
+      -- ^ Party who will own the holding after settlement.
+    custodian : Party
+      -- ^ The custodian of both the sender's and receiver's accounts.
+    instrument : InstrumentKey
+      -- ^ The instrument being moved.
+    amount : Decimal
+      -- ^ The amount to move.
+    senderAccountId : Id
+      -- ^ The sender's account id (where the holding currently lives).
+    receiverAccountId : Id
+      -- ^ The receiver's account id (where the holding will land).
+  deriving (Eq, Show)
+
+-- | An allocated instruction: a leg paired with the specific locked holding that
+--   will fulfil it. Produced during the allocation phase.
+data AllocatedLeg = AllocatedLeg
+  with
+    leg : Leg
+    holdingCid : ContractId Holding
+  deriving (Eq, Show)
+
+-- | The status of a settlement batch.
+data BatchStatus
+  = Pending
+    -- ^ Created, awaiting allocation of all legs.
+  | Allocated
+    -- ^ All legs allocated (holdings locked), ready to settle.
+  | Settled
+    -- ^ Successfully settled atomically.
+  | Cancelled
+    -- ^ Cancelled; all locks released.
+  deriving (Eq, Show)
+
+-- | A delegation by which a custodian grants a coordinator the authority to execute
+--   settlement transfers of holdings it custodies. This is the institutional pattern:
+--   a bank/registry pre-authorizes its settlement operator ONCE, so the coordinator
+--   can orchestrate atomic multi-leg settlement without the custodian co-signing every
+--   trade. The custodian's authority flows through the nonconsuming choice body.
+template SettlementAuthority
+  with
+    custodian : Party
+      -- ^ The custodian granting authority.
+    coordinator : Party
+      -- ^ The settlement coordinator receiving authority.
+  where
+    signatory custodian
+    observer coordinator
+    key (custodian, coordinator) : (Party, Party)
+    maintainer key._1
+
+    -- | Execute a locked holding's settlement transfer using the custodian's
+    --   delegated authority. The coordinator drives it; the new owner's authority
+    --   must be supplied by the calling transaction (the batch Settle).
+    nonconsuming choice ExecuteSettleTransfer : ContractId Holding
+      with
+        holdingCid : ContractId Holding
+        newOwner : Party
+        newAccountId : Id
+      controller coordinator, newOwner
+      do exercise holdingCid SettleTransfer with newOwner; newAccountId
+
+-- | A settlement batch: a set of legs that must settle atomically together.
+--   The `coordinator` is the party orchestrating settlement (e.g. an operator or
+--   the governed agent's principal). It locks holdings and triggers the atomic swap,
+--   but it never gains ownership — it only coordinates.
+template SettlementBatch
+  with
+    batchId : Id
+      -- ^ Unique batch identifier.
+    coordinator : Party
+      -- ^ Orchestrates settlement; locks legs and triggers the atomic swap.
+    legs : [Leg]
+      -- ^ The legs that must all settle together.
+    requiredParties : Parties
+      -- ^ All parties who must authorize settlement (senders + receivers).
+    regulator : Optional Party
+      -- ^ Optional observer for selective disclosure (compliance oversight).
+    status : BatchStatus
+      -- ^ Current batch status.
+    observers : Parties
+      -- ^ Parties the batch is disclosed to.
+  where
+    signatory coordinator
+    observer requiredParties, observers, regObs regulator
+    ensure not (null legs)
+    key (coordinator, batchId) : (Party, Id)
+    maintainer key._1
+
+    -- | Allocate the batch: lock every leg's source holding so it cannot move until
+    --   settlement. Returns the batch in `Allocated` status. The caller passes the
+    --   pre-locked holding cids (locked via Holding.LockHolding with this batch as
+    --   context). We verify each locked holding matches its leg.
+    choice Allocate : ContractId SettlementBatch
+      with
+        allocations : [AllocatedLeg]
+      controller coordinator
+      do
+        assertMsg "batch must be Pending" (status == Pending)
+        assertMsg "must allocate every leg" (length allocations == length legs)
+        -- verify each allocated holding matches its leg and is locked to this batch
+        forA_ allocations $ \al -> do
+          h <- fetch al.holdingCid
+          assertMsg "allocated holding must be locked" (isSome h.lock)
+          assertMsg "holding instrument must match leg" (h.instrument == al.leg.instrument)
+          assertMsg "holding amount must match leg" (h.amount == al.leg.amount)
+          assertMsg "holding owner must be leg sender"
+            (h.account.owner == al.leg.sender)
+        create this with status = Allocated
+
+    -- | Settle the batch atomically. Every locked leg is swapped to its receiver in
+    --   one transaction, using each custodian's delegated SettlementAuthority for the
+    --   custodian side and the required parties' authority (controllers here) for the
+    --   receiver side. If any leg fails, the whole transaction rolls back — atomicity.
+    choice Settle : SettlementResult
+      with
+        allocations : [AllocatedLeg]
+      controller coordinator :: Set.toList requiredParties
+      do
+        assertMsg "batch must be Allocated" (status == Allocated)
+        assertMsg "must settle every leg" (length allocations == length legs)
+        newHoldings <- forA allocations $ \al ->
+          exerciseByKey @SettlementAuthority (al.leg.custodian, coordinator)
+            ExecuteSettleTransfer with
+              holdingCid = al.holdingCid
+              newOwner = al.leg.receiver
+              newAccountId = al.leg.receiverAccountId
+        pure SettlementResult with
+          batchId
+          settledHoldings = newHoldings
+          legCount = length newHoldings
+
+    -- | Cancel the batch and release all locks. Any required party or the coordinator
+    --   can cancel before settlement (e.g. a condition was never met).
+    choice Cancel : [ContractId Holding]
+      with
+        actor : Party
+        lockedHoldings : [ContractId Holding]
+      controller actor
+      do
+        assertMsg "actor must be coordinator or a required party"
+          (actor == coordinator || actor `Set.member` requiredParties)
+        assertMsg "batch must not be settled" (status /= Settled)
+        released <- forA lockedHoldings $ \hCid ->
+          exercise hCid Release with actor = coordinator
+        pure released
+
+-- | Result of a successful atomic settlement.
+data SettlementResult = SettlementResult
+  with
+    batchId : Id
+    settledHoldings : [ContractId Holding]
+    legCount : Int
+  deriving (Eq)
+
+-- | Regulator-as-observer helper.
+regObs : Optional Party -> Parties
+regObs None = Set.empty
+regObs (Some p) = Set.singleton p

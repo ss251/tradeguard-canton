@@ -1,0 +1,69 @@
+-- Copyright (c) 2026 TradeGuard. SPDX-License-Identifier: Apache-2.0
+--
+-- | Instrument layer: instrument registration and holding issuance.
+--
+-- An `Instrument` is the canonical reference for a tradable thing (cash currency,
+-- a bill of lading, a warehouse receipt). A depository registers it; an issuer (or
+-- custodian) issues holdings of it into owners' accounts. Mirrors daml-finance's
+-- instrument/issuance separation.
+module TradeGuard.Instrument where
+
+import qualified DA.Set as Set
+import TradeGuard.Types
+import TradeGuard.Holding
+
+-- | A registered instrument. The on-ledger record of a tradable asset class.
+template Instrument
+  with
+    depository : Party
+      -- ^ Party providing depository services (vouches the instrument exists).
+    issuer : Party
+      -- ^ The issuer of the instrument.
+    id : Id
+      -- ^ Unique identifier (e.g. "USD", "BillOfLading-7741").
+    version : Text
+      -- ^ Instrument version.
+    holdingStandard : HoldingStandard
+      -- ^ The holding standard (TransferableFungible for cash, Transferable for title).
+    description : Text
+      -- ^ Human-readable description.
+    observers : Parties
+      -- ^ Parties the instrument is disclosed to.
+  where
+    signatory depository, issuer
+    observer observers
+    key (toInstrumentKey this) : InstrumentKey
+    maintainer key.depository
+
+    -- | Issue a holding of this instrument into an owner's account. Requires the
+    --   account to exist (custodian + owner co-authorize via the Holding signatory).
+    nonconsuming choice Issue : ContractId Holding
+      with
+        custodian : Party
+        owner : Party
+        accountId : Id
+        amount : Decimal
+      controller issuer, custodian, owner
+      do
+        assertMsg "amount must be positive" (amount > 0.0)
+        create Holding with
+          instrument = toInstrumentKey this
+          account = AccountKey with custodian; owner; id = accountId
+          amount
+          lock = None
+          observers = Set.empty
+
+    -- | Disclose the instrument to an additional observer.
+    choice DiscloseInstrument : ContractId Instrument
+      with discloseTo : Party
+      controller issuer
+      do create this with observers = Set.insert discloseTo observers
+
+-- | Build the instrument key from an Instrument template.
+toInstrumentKey : Instrument -> InstrumentKey
+toInstrumentKey i = InstrumentKey with
+  depository = i.depository
+  issuer = i.issuer
+  id = i.id
+  version = i.version
+  holdingStandard = i.holdingStandard

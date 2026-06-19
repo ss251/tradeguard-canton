@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeGuard — Screen Index</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{--paper:#f3efe6;--paper-edge:#e7e1d3;--ink:#1c1a17;--ink-soft:#6b6358;--rule:#cdc4b0;--oxblood:#7c2128;--seal-green:#2f5d46;--field:#fbfaf6}
+  body{background:var(--paper);color:var(--ink);font-family:"Inter",sans-serif;-webkit-font-smoothing:antialiased;
+    background-image:repeating-linear-gradient(0deg,transparent,transparent 31px,rgba(28,26,23,.03) 31px,rgba(28,26,23,.03) 32px);min-height:100vh}
+  .sheet{max-width:1000px;margin:0 auto;padding:0 40px}
+  .mast{padding:48px 0 18px;border-bottom:2px solid var(--ink)}
+  .mast .mark{font-weight:700;font-size:13px;letter-spacing:.28em;text-transform:uppercase;color:var(--oxblood)}
+  .mast h1{font-family:"Newsreader",serif;font-weight:500;font-size:48px;letter-spacing:-.01em;margin-top:6px}
+  .thesis{font-family:"Newsreader",serif;font-size:22px;font-style:italic;padding:24px 0 32px;max-width:64ch;color:var(--ink-soft)}
+  .flow{display:flex;align-items:center;gap:0;flex-wrap:wrap;font-family:"IBM Plex Mono";font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:30px}
+  .flow .f{padding:6px 0} .flow .sep{margin:0 12px;color:var(--oxblood)}
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding-bottom:60px}
+  a.card{text-decoration:none;color:inherit;border:1.5px solid var(--ink);background:var(--field);padding:22px;display:flex;flex-direction:column;gap:6px;transition:.12s}
+  a.card:hover{background:var(--paper-edge)}
+  a.card .n{font-family:"IBM Plex Mono";font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--oxblood)}
+  a.card .t{font-family:"Newsreader",serif;font-size:24px;font-weight:500}
+  a.card .d{font-family:"IBM Plex Mono";font-size:11px;color:var(--ink-soft);line-height:1.6}
+  a.card .go{font-family:"IBM Plex Mono";font-size:11px;color:var(--ink);margin-top:8px}
+  a.card.hero{grid-column:1 / -1;background:var(--ink);color:var(--paper)}
+  a.card.hero .d{color:#9a9183} a.card.hero .go{color:#e8a3a8} a.card.hero .n{color:#e8a3a8}
+  footer{font-family:"IBM Plex Mono";font-size:10.5px;color:var(--ink-soft);padding:0 0 50px;letter-spacing:.03em}
+</style>
+</head>
+<body>
+<div class="sheet">
+  <div class="mast"><div class="mark">TradeGuard · Canton</div><h1>Product Walkthrough</h1></div>
+  <p class="thesis">Private atomic DvP for B2B trade finance. Six screens, one trade — from a seller's draft to four parties each seeing only what they're owed.</p>
+
+  <div class="flow">
+    <span class="f">Dashboard</span><span class="sep">→</span>
+    <span class="f">Draft</span><span class="sep">→</span>
+    <span class="f">Accept</span><span class="sep">→</span>
+    <span class="f">Authorize</span><span class="sep">→</span>
+    <span class="f">Settle</span><span class="sep">·</span>
+    <span class="f">Exception</span>
+  </div>
+
+  <div class="cards">
+    <a class="card hero" href="tradeguard-settlement.html">
+      <span class="n">The money shot</span>
+      <span class="t">Settlement Record — 4 role views</span>
+      <span class="d">One settlement, four readers. Buyer/seller see their legs; regulator sees a scoped valid record; outsider sees nothing. Redaction enforced by the ledger.</span>
+      <span class="go">Open →</span>
+    </a>
+    <a class="card" href="tradeguard-dashboard.html">
+      <span class="n">Screen 1</span><span class="t">Dashboard</span>
+      <span class="d">Your party's trades only — no global feed. Privacy baked into the entry point.</span>
+      <span class="go">Open →</span>
+    </a>
+    <a class="card" href="tradeguard-propose.html">
+      <span class="n">Screen 2 · Seller</span><span class="t">Draft Proposal</span>
+      <span class="d">Compose the trade; the disclosure choice (who can ever see it) is the privacy model, set on black.</span>
+      <span class="go">Open →</span>
+    </a>
+    <a class="card" href="tradeguard-accept.html">
+      <span class="n">Screen 3 · Buyer</span><span class="t">Review &amp; Accept</span>
+      <span class="d">The give/receive swap + the atomicity guarantee that eliminates settlement risk.</span>
+      <span class="go">Open →</span>
+    </a>
+    <a class="card" href="tradeguard-agent.html">
+      <span class="n">Screen 4 · Governance</span><span class="t">Agent Approval Gate</span>
+      <span class="d">Agent proposes, human disposes. The wall that makes the AI angle trustworthy.</span>
+      <span class="go">Open →</span>
+    </a>
+    <a class="card" href="tradeguard-exception.html">
+      <span class="n">Screen 5 · Edge case</span><span class="t">Settlement Exception</span>
+      <span class="d">When delivery fails: nothing moved, no broken middle state. Practitioner credibility.</span>
+      <span class="go">Open →</span>
+    </a>
+  </div>
+
+  <footer>Built with Anthropic's frontend-design skill. Lo-fi structural wireframes: tradeguard-lofi.html.</footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,140 @@
+-- Copyright (c) 2026 TradeGuard. SPDX-License-Identifier: Apache-2.0
+--
+-- | Custody layer: Accounts and Holdings.
+--
+-- A `Holding` represents ownership of a quantity of an `Instrument`, custodied in an
+-- `Account`. This mirrors the daml-finance custody model: holdings are signed by the
+-- custodian and owner, can be locked (for in-flight settlement), and disclosed to
+-- additional observers for selective privacy.
+module TradeGuard.Holding where
+
+import qualified DA.Set as Set
+import DA.Optional (isSome)
+import TradeGuard.Types
+
+-- | An account at a custodian, owned by a party. Holdings reference their account.
+template Account
+  with
+    custodian : Party
+      -- ^ The account provider.
+    owner : Party
+      -- ^ The account owner.
+    id : Id
+      -- ^ Unique account identifier.
+    observers : Parties
+      -- ^ Parties who may observe the account itself.
+  where
+    signatory custodian, owner
+    observer observers
+    key AccountKey with custodian; owner; id : AccountKey
+    maintainer key.custodian
+
+    -- | Retrieve the account's key (stakeholder-gated).
+    nonconsuming choice GetAccountKey : AccountKey
+      with actor : Party
+      controller actor
+      do
+        assertMsg "actor must be a stakeholder" (actor == custodian || actor == owner)
+        pure (key this)
+
+-- | A lock placed on a holding while it is committed to an in-flight settlement.
+--   A locked holding cannot be transferred until unlocked, which is what makes
+--   atomic settlement safe: legs are locked, then swapped, or released on failure.
+data Lock = Lock
+  with
+    locker : Party
+      -- ^ The party that placed the lock (the settlement coordinator).
+    context : Text
+      -- ^ A textual context describing why it is locked (e.g. a batch id).
+  deriving (Eq, Show)
+
+-- | Parties that must observe a holding because of its lock.
+lockObserversOf : Optional Lock -> Parties
+lockObserversOf None = Set.empty
+lockObserversOf (Some l) = Set.singleton l.locker
+
+-- | A holding: ownership of `amount` of `instrument`, custodied in an account.
+template Holding
+  with
+    instrument : InstrumentKey
+      -- ^ What is held.
+    account : AccountKey
+      -- ^ Where it is custodied (custodian + owner + account id).
+    amount : Decimal
+      -- ^ How much is held.
+    lock : Optional Lock
+      -- ^ Present when the holding is locked for settlement.
+    observers : Parties
+      -- ^ Additional parties the holding is disclosed to (selective privacy).
+  where
+    signatory account.custodian, account.owner
+    observer observers, lockObserversOf lock
+    ensure amount > 0.0
+
+    -- | Disclose the holding to an additional observer (e.g. a counterparty who must
+    --   see it before agreeing to settle). Controlled by the owner.
+    choice Disclose : ContractId Holding
+      with
+        discloseTo : Party
+      controller account.owner
+      do create this with observers = Set.insert discloseTo observers
+
+    -- | Undisclose (remove an observer). Controlled by the owner.
+    choice Undisclose : ContractId Holding
+      with
+        remove : Party
+      controller account.owner
+      do create this with observers = Set.delete remove observers
+
+    -- | Lock the holding for an in-flight settlement. Requires custodian + owner
+    --   authorization. The locker becomes an observer so the settlement coordinator
+    --   can see the locked leg.
+    choice LockHolding : ContractId Holding
+      with
+        locker : Party
+        context : Text
+      controller account.custodian, account.owner
+      do
+        assertMsg "holding already locked" (not (isSome lock))
+        create this with lock = Some (Lock with locker; context)
+
+    -- | Release a lock without transferring (settlement failed / cancelled).
+    --   Controlled by the locker who placed it.
+    choice Release : ContractId Holding
+      with
+        actor : Party
+      controller actor
+      do
+        assertMsg "holding is not locked" (isSome lock)
+        assertMsg "only the locker may release" (optional False (\l -> l.locker == actor) lock)
+        create this with lock = None
+
+    -- | Transfer ownership to a new owner. The holding must be unlocked. Both the
+    --   custodian and the new owner authorize (the asset moves within one custodian).
+    choice Transfer : ContractId Holding
+      with
+        newOwner : Party
+        newAccountId : Id
+      controller account.custodian, newOwner
+      do
+        assertMsg "cannot transfer a locked holding" (not (isSome lock))
+        create this with
+          account = AccountKey with custodian = account.custodian; owner = newOwner; id = newAccountId
+          observers = Set.empty
+
+    -- | Settlement-time transfer: used inside an atomic batch where the holding is
+    --   already locked. Authorized by the custodian (who signs the new holding) and
+    --   the new owner (who receives it). The custodian's authority is supplied via a
+    --   `SettlementAuthority` delegation, so the coordinator can orchestrate without
+    --   the custodian signing every settlement.
+    choice SettleTransfer : ContractId Holding
+      with
+        newOwner : Party
+        newAccountId : Id
+      controller account.custodian, newOwner
+      do
+        assertMsg "holding must be locked for settlement" (isSome lock)
+        create this with
+          account = AccountKey with custodian = account.custodian; owner = newOwner; id = newAccountId
+          lock = None
+          observers = Set.empty

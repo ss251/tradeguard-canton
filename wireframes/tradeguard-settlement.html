@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeGuard — Settlement Record</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --paper:#f3efe6; --paper-edge:#e7e1d3; --ink:#1c1a17; --ink-soft:#6b6358;
+    --rule:#cdc4b0; --oxblood:#7c2128; --seal-green:#2f5d46;
+  }
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--paper); color:var(--ink); font-family:"Inter",sans-serif;
+    line-height:1.5; -webkit-font-smoothing:antialiased;
+    background-image:repeating-linear-gradient(0deg, transparent, transparent 31px, rgba(28,26,23,.03) 31px, rgba(28,26,23,.03) 32px);
+    min-height:100vh;
+  }
+  .sheet{max-width:1180px;margin:0 auto;padding:0 40px}
+
+  /* masthead */
+  .mast{display:flex;justify-content:space-between;align-items:flex-end;padding:40px 0 16px;border-bottom:2px solid var(--ink)}
+  .mast .mark{font-weight:700;font-size:13px;letter-spacing:.28em;text-transform:uppercase;color:var(--oxblood)}
+  .mast h1{font-family:"Newsreader",serif;font-weight:500;font-size:46px;letter-spacing:-.01em;line-height:1;margin-top:6px}
+  .mast .meta{text-align:right;font-family:"IBM Plex Mono";font-size:11px;color:var(--ink-soft);line-height:1.8}
+  .mast .meta b{color:var(--ink)}
+
+  .thesis{font-family:"Newsreader",serif;font-size:23px;font-style:italic;padding:24px 0 28px;max-width:70ch}
+  .thesis .em{font-style:normal;font-weight:600;border-bottom:2px solid var(--oxblood);padding-bottom:1px}
+
+  /* ── TWO-COLUMN: left instrument spine + right record ── */
+  .grid{display:grid;grid-template-columns:280px 1fr;gap:0;border:1.5px solid var(--ink)}
+
+  /* left spine */
+  .spine{background:var(--ink);color:var(--paper);padding:0}
+  .spine .blk{padding:20px 22px;border-bottom:1px solid rgba(243,239,230,.14)}
+  .spine .blk:last-child{border-bottom:0}
+  .spine .h{font-family:"IBM Plex Mono";font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#9a9183;margin-bottom:12px}
+  .spine .kv{display:flex;justify-content:space-between;font-family:"IBM Plex Mono";font-size:12px;margin:7px 0;gap:12px}
+  .spine .kv .k{color:#9a9183}
+  .spine .kv .v{color:var(--paper);text-align:right}
+  .spine .kv .v.acc{color:#e8a3a8}
+  /* party legend */
+  .party-leg{display:flex;align-items:center;gap:10px;font-family:"IBM Plex Mono";font-size:12px;margin:11px 0;color:#d8d1c4;cursor:pointer;transition:color .12s}
+  .party-leg:hover{color:var(--paper)}
+  .party-leg .who{width:9px;height:9px;border-radius:50%;flex:none}
+  .party-leg.active{color:var(--paper)}
+  .party-leg.active .lab{border-bottom:1.5px solid #e8a3a8;padding-bottom:1px}
+  .pd-buyer{background:#7fb3e0}.pd-seller{background:#7fc59a}.pd-reg{background:#e0c068}.pd-out{background:#c98}
+  .keyline{font-family:"IBM Plex Mono";font-size:10.5px;line-height:1.7;color:#9a9183}
+  .keyline .bar{display:inline-block;width:34px;height:9px;background:var(--paper);vertical-align:middle;margin-right:6px;border-radius:1px}
+
+  /* right record column */
+  .record{display:flex;flex-direction:column}
+  .rec-band{display:flex;justify-content:space-between;align-items:center;padding:14px 22px;border-bottom:1px solid var(--rule);background:var(--paper-edge)}
+  .rec-band .id{font-family:"IBM Plex Mono";font-size:12px}
+  .rec-band .id b{color:var(--oxblood)}
+  .reading{font-family:"IBM Plex Mono";font-size:11px;color:var(--ink-soft);padding:10px 22px 0}
+
+  /* legs with a strong atomic hinge */
+  .legs{display:grid;grid-template-columns:1fr 96px 1fr;align-items:stretch;padding:8px 0}
+  .leg{padding:22px 24px}
+  .leg .cap{font-family:"IBM Plex Mono";font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px}
+  .leg .amt{font-family:"Newsreader",serif;font-size:34px;font-weight:500;letter-spacing:-.01em;line-height:1.02}
+  .leg .sub{font-family:"IBM Plex Mono";font-size:11px;color:var(--ink-soft);margin-top:9px}
+  .hinge{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;position:relative}
+  .hinge::before{content:"";position:absolute;top:18px;bottom:18px;left:50%;width:1px;background:var(--rule)}
+  .hinge .ring{width:52px;height:52px;border-radius:50%;border:1.5px solid var(--oxblood);display:flex;align-items:center;justify-content:center;background:var(--paper);position:relative;z-index:1;color:var(--oxblood);font-size:22px;font-family:"Newsreader",serif}
+  .hinge .cap{font-family:"IBM Plex Mono";font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--oxblood);font-weight:600}
+
+  .ledger{border-top:1px solid var(--rule)}
+  .lrow{display:grid;grid-template-columns:180px 1fr;border-bottom:1px solid var(--rule)}
+  .lrow:last-child{border-bottom:0}
+  .lrow .k{font-family:"IBM Plex Mono";font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-soft);padding:14px 22px;background:var(--paper-edge);border-right:1px solid var(--rule)}
+  .lrow .v{font-family:"IBM Plex Mono";font-size:13px;padding:14px 22px;display:flex;align-items:center}
+
+  .stamp{font-family:"IBM Plex Mono";font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;padding:5px 13px;border:1.5px solid var(--seal-green);color:var(--seal-green);transform:rotate(-2deg)}
+
+  .redact{position:relative;display:inline-block;color:transparent;user-select:none;background:var(--ink);border-radius:1px;padding:0 3px;min-width:200px}
+  .redact::after{content:"REDACTED — not disclosed to your party";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--paper);font-size:8.5px;letter-spacing:.08em;white-space:nowrap}
+  .redact.sm{min-width:150px}.redact.sm::after{content:"REDACTED"}
+  /* redaction inside the dark spine: light bar so it reads on dark */
+  .spine .redact{background:#3a342c;min-width:90px}
+  .spine .redact::after{content:"REDACTED";color:#9a9183;font-size:8px}
+  .spine .h2-hint{font-family:"IBM Plex Mono";font-size:9.5px;color:#7c756a;letter-spacing:.1em;text-transform:uppercase;margin-top:10px}
+
+  .agent{display:flex;align-items:center;gap:16px;padding:16px 22px;border-top:1.5px solid var(--ink);background:var(--paper-edge);font-family:"IBM Plex Mono";font-size:11.5px;color:var(--ink-soft)}
+  .agent .tick{display:flex;flex-direction:column;align-items:center;color:var(--seal-green);font-weight:600;border:1.5px solid var(--seal-green);border-radius:3px;padding:6px 10px;line-height:1.2;font-size:10px;letter-spacing:.1em}
+  .agent b{color:var(--ink)}
+
+  /* outsider — imposing full-width void */
+  .sealed{grid-column:1 / -1;padding:0}
+  .void{padding:90px 40px;text-align:center;background:repeating-linear-gradient(135deg,var(--paper-edge),var(--paper-edge) 16px,var(--paper) 16px,var(--paper) 32px)}
+  .void .band{display:inline-block;background:var(--paper);border:1.5px solid var(--oxblood);padding:30px 44px;max-width:560px}
+  .void .big{font-family:"Newsreader",serif;font-size:30px;color:var(--oxblood);font-weight:500}
+  .void .q{font-family:"IBM Plex Mono";font-size:12px;color:var(--ink-soft);margin-top:14px;line-height:1.7}
+  .void .q b{color:var(--ink)}
+
+  footer{font-family:"IBM Plex Mono";font-size:10.5px;color:var(--ink-soft);text-align:center;padding:26px 0 50px;letter-spacing:.03em}
+
+  @media (max-width:820px){
+    .sheet{padding:0 20px}
+    .mast{flex-direction:column;align-items:flex-start;gap:10px}.mast h1{font-size:34px}
+    .grid{grid-template-columns:1fr}
+    .spine{display:flex;flex-wrap:wrap}.spine .blk{flex:1;min-width:50%;border-bottom:1px solid rgba(243,239,230,.14)}
+    .legs{grid-template-columns:1fr}
+    .hinge{flex-direction:row;padding:10px}.hinge::before{display:none}
+    .lrow{grid-template-columns:120px 1fr}
+  }
+  @media (prefers-reduced-motion:no-preference){
+    #stage{animation:settle .35s ease both}
+    @keyframes settle{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="mast">
+    <div><div class="mark">TradeGuard · Canton</div><h1>Settlement Record</h1></div>
+    <div class="meta" id="mast-meta"></div>
+  </div>
+
+  <p class="thesis">One settlement. Four readers. Each sees <span class="em">only what they're owed</span> — enforced by the ledger, not the interface.</p>
+
+  <div class="grid" id="stage">
+    <!-- LEFT SPINE -->
+    <aside class="spine">
+      <div class="blk">
+        <div class="h">Reading as <span style="color:#7c756a;font-size:9px">— click to switch</span></div>
+        <div id="legend"></div>
+      </div>
+      <div class="blk" id="spine-instrument"></div>
+      <div class="blk">
+        <div class="h">Disclosure key</div>
+        <div class="keyline" id="spine-key"><span class="bar"></span>fields you're not<br>entitled to are<br>redacted by the<br>protocol — not hidden<br>by this screen.</div>
+      </div>
+    </aside>
+
+    <!-- RIGHT RECORD -->
+    <section id="record"></section>
+  </div>
+
+  <footer>Disclosed fields are this party's projection of the Canton ledger (JSON Ledger API / PQS). Redaction is protocol-level sub-transaction privacy — not a client-side mask.</footer>
+</div>
+
+<script>
+const R = (label, sm) => `<span class="redact${sm?' sm':''}">${label}</span>`;
+
+const ROLES = [
+  ["buyer","Importer Co.","Buyer","pd-buyer"],
+  ["seller","Exporter Ltd.","Seller","pd-seller"],
+  ["regulator","FCA","Regulator","pd-reg"],
+  ["outsider","Public","Outsider","pd-out"],
+];
+
+const DATA = {
+  buyer:{ reading:"Reading as the buyer — your own legs in full.", stamp:["SETTLED","ok"],
+    legL:{cap:"You pay · cash leg", amt:"$100,000.00", sub:"USD · tokenized deposit"},
+    legR:{cap:"You receive · asset leg", amt:"B/L 7741", sub:"maritime cargo title · 1 unit"},
+    rows:[["Counterparty","Exporter Ltd."],["Your funding","Bank A — deposit ····2210"],["Regulator","FCA — observing"],["Finality","Atomic · both legs or neither"]], agent:true },
+  seller:{ reading:"Reading as the seller — your own legs in full.", stamp:["SETTLED","ok"],
+    legL:{cap:"You deliver · asset leg", amt:"B/L 7741", sub:"maritime cargo title · 1 unit"},
+    legR:{cap:"You receive · cash leg", amt:"$100,000.00", sub:"USD · settled to your account"},
+    rows:[["Counterparty","Importer Co."],["Buyer funding", R("Bank A — deposit ····2210")],["Regulator","FCA — observing"],["Finality","Atomic · both legs or neither"]], agent:false },
+  regulator:{ reading:"Reading as the regulator — read-only oversight, scoped disclosure.", stamp:["VALID","ok"],
+    legL:{cap:"Asset leg", amt:"Title transferred", sub:"counterparties on record"},
+    legR:{cap:"Cash leg", amt:"Payment finalized", sub:"atomic settlement confirmed"},
+    rows:[["Buyer","Importer Co."],["Seller","Exporter Ltd."],["Amount", R("disclosed under warrant only", true)],["Your authority","Observer — cannot act"]], agent:false },
+  outsider:{ sealed:true, reading:"Reading as an outsider — you are not a party to this record." }
+};
+
+function renderLegend(active){
+  document.getElementById("legend").innerHTML = ROLES.map(([id,name,role,dot])=>
+    `<div class="party-leg ${id===active?'active':''}"><span class="who ${dot}"></span><span class="lab">${name} · ${role}</span></div>`).join("");
+}
+const legHTML = l => `<div class="leg"><div class="cap">${l.cap}</div><div class="amt">${l.amt}</div><div class="sub">${l.sub}</div></div>`;
+
+function renderSpine(role){
+  const el = document.getElementById("spine-instrument");
+  if(role==="outsider"){
+    el.innerHTML = `<div class="h">Instrument</div>
+      <div class="kv"><span class="k">Ref</span><span class="v">${R("",true)}</span></div>
+      <div class="kv"><span class="k">Asset</span><span class="v">${R("",true)}</span></div>
+      <div class="kv"><span class="k">Value</span><span class="v">${R("",true)}</span></div>
+      <div class="kv"><span class="k">Settled</span><span class="v">${R("",true)}</span></div>`;
+    return;
+  }
+  // regulator: knows it exists + parties, but value is scoped
+  const value = role==="regulator" ? R("",true) : '<span class="v">USD 100,000</span>';
+  el.innerHTML = `<div class="h">Instrument</div>
+    <div class="kv"><span class="k">Ref</span><span class="v acc">#TG-0042</span></div>
+    <div class="kv"><span class="k">Asset</span><span class="v">B/L 7741</span></div>
+    <div class="kv"><span class="k">Value</span>${value}</div>
+    <div class="kv"><span class="k">Settled</span><span class="v">19 Jun 2026</span></div>`;
+}
+
+function renderMast(role){
+  const el = document.getElementById("mast-meta");
+  if(role==="outsider"){
+    el.innerHTML = `INSTRUMENT &nbsp;<span style="color:#b59a9c">——</span><br>STATUS &nbsp;<b>not disclosed</b><br>METHOD &nbsp;<span style="color:#b59a9c">——</span>`;
+    return;
+  }
+  el.innerHTML = `INSTRUMENT &nbsp;<b>TG-0042</b><br>SETTLED &nbsp;19 JUN 2026 · 14:02 UTC<br>METHOD &nbsp;<b>Atomic DvP</b>`;
+}
+
+function render(role){
+  renderMast(role);
+  renderLegend(role);
+  renderSpine(role);
+  const d = DATA[role];
+  const el = document.getElementById("record");
+  if(d.sealed){
+    el.className=""; el.innerHTML = `<div class="sealed"><div class="void">
+      <div class="band"><div class="big">No record disclosed</div>
+      <div class="q">You are not a stakeholder. The ledger returns <b>None</b> —<br>not the amount, not the parties, not that a trade occurred.</div></div>
+    </div></div>`;
+    return;
+  }
+  el.className="record";
+  el.innerHTML = `
+    <div class="rec-band">
+      <span class="id">INSTRUMENT <b>#TG-0042</b> · ${d.reading.includes('regulator')?'oversight view':'your projection'}</span>
+      <span class="stamp">${d.stamp[0]}</span>
+    </div>
+    <div class="reading">${d.reading}</div>
+    <div class="legs">
+      ${legHTML(d.legL)}
+      <div class="hinge"><div class="ring">⇄</div><div class="cap">Atomic</div></div>
+      ${legHTML(d.legR)}
+    </div>
+    <div class="ledger">
+      ${d.rows.map(([k,v])=>`<div class="lrow"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("")}
+    </div>
+    ${d.agent?`<div class="agent"><span class="tick">✓<br>APPROVED</span><span>Settlement agent prepared this instruction; <b>a human authorized it</b> before the ledger executed. The agent proposes — it never moves funds.</span></div>`:""}`;
+}
+
+const stage=document.getElementById("stage");
+// build a click strip from the legend in the spine
+document.getElementById("legend").addEventListener("click", e=>{
+  const row=e.target.closest(".party-leg"); if(!row) return;
+  const id=ROLES[[...row.parentElement.children].indexOf(row)][0];
+  render(id);
+});
+render("buyer");
+</script>
+</body>
+</html>

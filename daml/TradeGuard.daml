@@ -1,0 +1,172 @@
+module TradeGuard where
+
+-- TradeGuard: private atomic DvP for B2B trade finance on Canton.
+-- Path-A skeleton (hand-rolled, no daml-finance dependency) so it is guaranteed
+-- to build + deploy on the Seaport "5n sandbox" DevNet validator.
+--
+-- Flow:  Seller proposes  ->  Buyer accepts  ->  atomic DvP settlement
+--        (asset leg + cash leg move together or neither moves).
+-- Privacy: only the named parties (signatory/observer) can see each contract.
+--          A Regulator is an observer on the settled Trade for selective disclosure.
+--
+-- This is intentionally minimal but REAL: multiple interacting templates,
+-- meaningful signatory/observer/controller rules, an ensure guard, and an
+-- atomic settlement choice. Extend later (conditional delivery attestation,
+-- richer assets) once it deploys.
+
+import Daml.Script
+
+-- ---------------------------------------------------------------------------
+-- Holdings: the two "legs" of a trade.
+--   AssetHolding = the thing being sold (e.g. tokenized goods / title).
+--   CashHolding  = the payment (e.g. a tokenized deposit).
+-- Each holding is owned by exactly one party and signed by an issuer + owner,
+-- so transfers require proper authorization (propose-accept under the hood).
+-- ---------------------------------------------------------------------------
+
+template AssetHolding
+  with
+    issuer   : Party        -- who minted/registers the asset (e.g. a registry)
+    owner    : Party        -- current owner
+    assetId  : Text         -- what it is, e.g. "BillOfLading-7741"
+    quantity : Decimal
+  where
+    signatory issuer, owner
+    ensure quantity > 0.0
+
+    -- Internal transfer of ownership; only callable by the settlement logic
+    -- (the new owner must authorize, which happens inside the atomic choice).
+    choice AssetHolding_Transfer : ContractId AssetHolding
+      with newOwner : Party
+      controller owner, newOwner
+      do create this with owner = newOwner
+
+template CashHolding
+  with
+    issuer : Party          -- the bank / tokenized-deposit issuer
+    owner  : Party
+    ccy    : Text           -- currency, e.g. "USD"
+    amount : Decimal
+  where
+    signatory issuer, owner
+    ensure amount > 0.0
+
+    choice CashHolding_Transfer : ContractId CashHolding
+      with newOwner : Party
+      controller owner, newOwner
+      do create this with owner = newOwner
+
+-- ---------------------------------------------------------------------------
+-- TradeProposal: the seller's signed offer. Buyer is an OBSERVER (can see it,
+-- can't change it) and the only controller of Accept. This is the workshop's
+-- propose-accept pattern; it's how both parties end up authorizing the Trade.
+-- ---------------------------------------------------------------------------
+
+template TradeProposal
+  with
+    seller     : Party
+    buyer      : Party
+    regulator  : Party       -- observer on the settled trade (selective disclosure)
+    assetCid   : ContractId AssetHolding   -- the asset leg the seller will deliver
+    price      : Decimal
+    ccy        : Text
+  where
+    signatory seller
+    observer buyer
+    ensure price > 0.0
+
+    -- Buyer accepts AND atomically settles: they bring their cash holding,
+    -- and both legs swap inside ONE transaction (do-block) = atomic DvP.
+    choice Accept : ContractId Trade
+      with cashCid : ContractId CashHolding   -- the buyer's payment leg
+      controller buyer
+      do
+        -- fetch both legs to validate before moving anything
+        asset <- fetch assetCid
+        cash  <- fetch cashCid
+        assertMsg "asset must belong to seller" (asset.owner == seller)
+        assertMsg "cash must belong to buyer"    (cash.owner == buyer)
+        assertMsg "payment must match price"     (cash.amount == price && cash.ccy == ccy)
+
+        -- ATOMIC DvP: both transfers happen here, or the whole tx rolls back.
+        newAssetCid <- exercise assetCid AssetHolding_Transfer with newOwner = buyer
+        newCashCid  <- exercise cashCid  CashHolding_Transfer  with newOwner = seller
+
+        -- record the settled trade (both parties signed via this flow;
+        -- regulator can observe but not act)
+        create Trade with
+          seller, buyer, regulator
+          assetId = asset.assetId
+          quantity = asset.quantity
+          price, ccy
+          settledAsset = newAssetCid
+          settledCash  = newCashCid
+
+    choice Reject : ()
+      controller buyer
+      do return ()
+
+-- ---------------------------------------------------------------------------
+-- Trade: the immutable record of a settled deal. Signed by both counterparties.
+-- The regulator is an OBSERVER => selective disclosure: they see that a valid
+-- settlement finalized, without being able to alter it. An outsider (not named)
+-- sees NOTHING at all -- that's Canton sub-transaction privacy / proof-of-stakeholders.
+-- ---------------------------------------------------------------------------
+
+template Trade
+  with
+    seller       : Party
+    buyer        : Party
+    regulator    : Party
+    assetId      : Text
+    quantity     : Decimal
+    price        : Decimal
+    ccy          : Text
+    settledAsset : ContractId AssetHolding
+    settledCash  : ContractId CashHolding
+  where
+    signatory seller, buyer
+    observer regulator
+
+-- ---------------------------------------------------------------------------
+-- Daml Script test: proves the full flow AND the privacy model.
+-- Run with `daml test` locally, or via Seaport's script runner.
+-- ---------------------------------------------------------------------------
+
+setup : Script ()
+setup = script do
+  -- allocate the four roles
+  seller    <- allocateParty "Seller"
+  buyer     <- allocateParty "Buyer"
+  regulator <- allocateParty "Regulator"
+  bank      <- allocateParty "Bank"      -- cash issuer
+  registry  <- allocateParty "Registry"  -- asset issuer
+
+  -- seller owns an asset; buyer owns matching cash
+  assetCid <- submit (actAs registry <> actAs seller) do
+    createCmd AssetHolding with
+      issuer = registry; owner = seller
+      assetId = "BillOfLading-7741"; quantity = 1.0
+
+  cashCid <- submit (actAs bank <> actAs buyer) do
+    createCmd CashHolding with
+      issuer = bank; owner = buyer
+      ccy = "USD"; amount = 100.0
+
+  -- seller proposes the trade
+  propCid <- submit seller do
+    createCmd TradeProposal with
+      seller, buyer, regulator, assetCid
+      price = 100.0; ccy = "USD"
+
+  -- buyer accepts -> atomic DvP settlement
+  tradeCid <- submit buyer do
+    exerciseCmd propCid Accept with cashCid
+
+  -- PRIVACY PROOF: seller, buyer, regulator can see the Trade; an outsider cannot.
+  outsider <- allocateParty "Outsider"
+  Some _ <- queryContractId seller tradeCid
+  Some _ <- queryContractId buyer tradeCid
+  Some _ <- queryContractId regulator tradeCid
+  None   <- queryContractId outsider tradeCid    -- outsider sees NOTHING
+  pure ()

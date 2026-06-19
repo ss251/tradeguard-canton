@@ -1,0 +1,16 @@
+sdk-version: 2.10.4
+name: df-probe
+version: 0.0.1
+source: daml
+build-options:
+  - --target=1.17
+dependencies:
+  - daml-prim
+  - daml-stdlib
+  - daml-script-lts
+data-dependencies:
+  - /Users/thescoho/Developer/canton-hackathon/vendor/daml-finance-interface-holding-v4-4.0.0.dar
+  - /Users/thescoho/Developer/canton-hackathon/vendor/daml-finance-interface-account-v4-4.0.0.dar
+  - /Users/thescoho/Developer/canton-hackathon/vendor/daml-finance-interface-types-common-v3-3.0.0.dar
+  - /Users/thescoho/Developer/canton-hackathon/vendor/daml-finance-holding-v4-4.0.0.dar
+  - /Users/thescoho/Developer/canton-hackathon/vendor/daml-finance-account-v4-4.0.0.dar

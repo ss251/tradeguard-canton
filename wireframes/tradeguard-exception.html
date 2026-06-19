@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeGuard — Exception</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --paper:#f3efe6; --paper-edge:#e7e1d3; --ink:#1c1a17; --ink-soft:#6b6358;
+    --rule:#cdc4b0; --oxblood:#7c2128; --seal-green:#2f5d46; --field:#fbfaf6; --amber:#9a6b1f;
+  }
+  body{
+    background:var(--paper); color:var(--ink); font-family:"Inter",sans-serif;
+    line-height:1.5; -webkit-font-smoothing:antialiased;
+    background-image:repeating-linear-gradient(0deg, transparent, transparent 31px, rgba(28,26,23,.03) 31px, rgba(28,26,23,.03) 32px);
+    min-height:100vh;
+  }
+  .sheet{max-width:1180px;margin:0 auto;padding:0 40px}
+
+  .mast{display:flex;justify-content:space-between;align-items:flex-end;padding:34px 0 16px;border-bottom:2px solid var(--ink)}
+  .mast .mark{font-weight:700;font-size:13px;letter-spacing:.28em;text-transform:uppercase;color:var(--oxblood)}
+  .mast h1{font-family:"Newsreader",serif;font-weight:500;font-size:42px;letter-spacing:-.01em;line-height:1;margin-top:6px}
+  .mast .by{text-align:right;font-family:"IBM Plex Mono";font-size:11px;color:var(--ink-soft);line-height:1.8}
+  .mast .by b{color:var(--ink)}
+  .mast .by .flag{display:inline-block;margin-top:6px;color:var(--oxblood);border:1.5px solid var(--oxblood);padding:3px 9px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;font-size:10px}
+
+  .grid{display:grid;grid-template-columns:1fr 380px;gap:0;border:1.5px solid var(--ink);margin-top:26px}
+  .main{padding:0}
+
+  /* the failure banner */
+  .fail{padding:24px 26px;background:#fbf2f1;border-bottom:1.5px solid var(--oxblood)}
+  .fail .h{display:flex;align-items:center;gap:10px;font-family:"Newsreader",serif;font-size:23px;font-weight:500;color:var(--oxblood)}
+  .fail .h .ic{width:30px;height:30px;border:1.5px solid var(--oxblood);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;flex:none}
+  .fail .sub{font-family:"IBM Plex Mono";font-size:12px;color:var(--ink-soft);margin-top:10px;line-height:1.6}
+  .fail .sub b{color:var(--ink)}
+
+  /* timeline of what happened */
+  .tl{padding:24px 26px}
+  .tl .h{font-family:"IBM Plex Mono";font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:18px}
+  .ev{display:flex;gap:14px;padding-bottom:18px;position:relative}
+  .ev:last-child{padding-bottom:0}
+  .ev .node{width:13px;height:13px;border-radius:50%;flex:none;margin-top:3px;border:2px solid var(--seal-green);background:var(--paper)}
+  .ev.bad .node{border-color:var(--oxblood)}
+  .ev.pending .node{border-color:var(--rule)}
+  .ev:not(:last-child)::before{content:"";position:absolute;left:6px;top:18px;bottom:0;width:1.5px;background:var(--rule)}
+  .ev .c .t{font-family:"Inter";font-size:13px;font-weight:600}
+  .ev.bad .c .t{color:var(--oxblood)}
+  .ev .c .m{font-family:"IBM Plex Mono";font-size:11px;color:var(--ink-soft);margin-top:3px}
+  .ev .c .time{font-family:"IBM Plex Mono";font-size:10px;color:var(--rule);margin-top:3px}
+
+  /* the reassurance: funds safe */
+  .safe{margin:0 26px 24px;border:1px solid var(--rule);background:var(--field)}
+  .safe .sh{font-family:"IBM Plex Mono";font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft);padding:12px 16px;border-bottom:1px solid var(--rule)}
+  .safe .pair{display:grid;grid-template-columns:1fr 1fr;}
+  .safe .h2{padding:16px;font-family:"IBM Plex Mono";font-size:12px}
+  .safe .h2:first-child{border-right:1px solid var(--rule)}
+  .safe .h2 .k{color:var(--ink-soft);font-size:10px;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px}
+  .safe .h2 .v{font-family:"Newsreader",serif;font-size:17px}
+  .safe .h2 .held{color:var(--seal-green);font-family:"IBM Plex Mono";font-size:10.5px;margin-top:5px}
+
+  /* right rail: resolution options */
+  .rail{background:var(--paper-edge);border-left:1.5px solid var(--ink);display:flex;flex-direction:column}
+  .rail .rh{padding:18px 22px;border-bottom:1px solid var(--rule);font-family:"IBM Plex Mono";font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft)}
+  .rail .body{padding:18px 22px;flex:1}
+  .opt{display:block;width:100%;text-align:left;border:1.5px solid var(--rule);background:var(--field);border-radius:3px;padding:15px 16px;margin-bottom:12px;cursor:pointer;transition:.12s}
+  .opt:hover{border-color:var(--ink)}
+  .opt .ot{font-family:"Inter";font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:space-between}
+  .opt .ot .ar{color:var(--ink-soft)}
+  .opt .od{font-family:"IBM Plex Mono";font-size:10.5px;color:var(--ink-soft);margin-top:6px;line-height:1.5}
+  .opt.primary{border-color:var(--ink);background:var(--ink)}
+  .opt.primary .ot{color:var(--paper)} .opt.primary .od{color:#9a9183}
+  .opt.danger:hover{border-color:var(--oxblood)}
+  .opt.danger .ot{color:var(--oxblood)}
+  .rail .countdown{font-family:"IBM Plex Mono";font-size:10.5px;color:var(--amber);padding:14px 22px;border-top:1px solid var(--rule);display:flex;align-items:center;gap:8px}
+  .rail .countdown .clk{width:8px;height:8px;border-radius:50%;background:var(--amber)}
+
+  footer{font-family:"IBM Plex Mono";font-size:10.5px;color:var(--ink-soft);text-align:center;padding:26px 0 50px;letter-spacing:.03em}
+
+  @media (max-width:880px){
+    .sheet{padding:0 20px}.grid{grid-template-columns:1fr}.rail{border-left:0;border-top:1.5px solid var(--ink)}
+    .mast h1{font-size:32px}.safe .pair{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="mast">
+    <div><div class="mark">TradeGuard · Canton</div><h1>Settlement Exception</h1></div>
+    <div class="by">TRADE <b>#TG-0039</b><br>Warehouse Receipt &harr; $250,000<br><span class="flag">Action needed</span></div>
+  </div>
+
+  <div class="grid">
+    <div class="main">
+      <div class="fail">
+        <div class="h"><span class="ic">!</span>Delivery not attested by deadline</div>
+        <div class="sub">The settlement window for <b>#TG-0039</b> closed at 18:00 UTC without a delivery attestation from the registry. <b>Settlement did not occur.</b> Because settlement is atomic, no leg moved — there is no partial or half-settled state to unwind.</div>
+      </div>
+
+      <div class="tl">
+        <div class="h">What happened</div>
+        <div class="ev"><span class="node"></span><div class="c"><div class="t">Proposal signed &amp; accepted</div><div class="m">Both parties committed; awaiting delivery attestation.</div><div class="time">16 Jun · 09:12 UTC</div></div></div>
+        <div class="ev pending"><span class="node"></span><div class="c"><div class="t" style="color:var(--ink-soft)">Awaiting delivery attestation</div><div class="m">Registry to endorse the warehouse receipt before the window.</div><div class="time">deadline 18 Jun · 18:00 UTC</div></div></div>
+        <div class="ev bad"><span class="node"></span><div class="c"><div class="t">Window closed — no attestation</div><div class="m">Condition unmet. Settlement command was never authorized to run.</div><div class="time">18 Jun · 18:00 UTC</div></div></div>
+      </div>
+
+      <div class="safe">
+        <div class="sh">Positions — nothing moved</div>
+        <div class="pair">
+          <div class="h2"><div class="k">Your cash</div><div class="v">$250,000</div><div class="held">✓ still yours — never locked out</div></div>
+          <div class="h2"><div class="k">Their title</div><div class="v">Warehouse Rcpt 0192</div><div class="held">✓ still theirs — never transferred</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RESOLUTION -->
+    <aside class="rail">
+      <div class="rh">Resolve</div>
+      <div class="body">
+        <button class="opt primary"><div class="ot">Extend the window <span class="ar">→</span></div><div class="od">Give the registry more time. Re-opens the same proposal with a new deadline — both parties must re-confirm.</div></button>
+        <button class="opt"><div class="ot">Cancel &amp; release <span class="ar">→</span></div><div class="od">Close the proposal cleanly. Both parties keep their assets; the contract is archived.</div></button>
+        <button class="opt danger"><div class="ot">Escalate to regulator <span class="ar">→</span></div><div class="od">Bring the FCA observer in to review. Adds a dispute record to the trade's audit trail.</div></button>
+      </div>
+      <div class="countdown"><span class="clk"></span>Grace period to resolve: 47h 12m remaining</div>
+    </aside>
+  </div>
+
+  <footer>Atomicity guarantees there is no broken middle state to repair — the failure mode is "nothing happened," not "money is stuck." Resolution actions operate on the still-open TradeProposal contract.</footer>
+</div>
+</body>
+</html>

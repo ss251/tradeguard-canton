@@ -1,0 +1,8 @@
+*-token.txt
+*-result.json
+.daml/
+vendor/_inspect/
+vendor/*.tar.gz
+__pycache__/
+*.pyc
+pkgid.txt

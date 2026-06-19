@@ -1,0 +1,11 @@
+sdk-version: 2.10.4
+name: tradeguard
+version: 1.0.0
+source: daml
+init-script: TradeGuard.Init:initialize
+build-options:
+  - --target=1.17
+dependencies:
+  - daml-prim
+  - daml-stdlib
+  - daml-script-lts

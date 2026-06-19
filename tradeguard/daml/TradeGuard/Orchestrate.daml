@@ -1,0 +1,106 @@
+-- Copyright (c) 2026 TradeGuard. SPDX-License-Identifier: Apache-2.0
+--
+-- | Settlement orchestration scripts, invoked by the off-chain agent AFTER a human
+--   has approved the settlement (an ApprovedAction exists on the ledger).
+--
+-- This is the "execute" half of the governed agent: it is only ever run once a human
+-- approval is recorded on-ledger, and it performs the full atomic settlement —
+-- lock both legs, assemble + allocate the batch, settle atomically. If any step
+-- fails, the whole transaction rolls back (no partial settlement).
+module TradeGuard.Orchestrate where
+
+import DA.Optional (fromSome)
+import DA.List (head)
+import DA.Foldable (forA_)
+import qualified DA.Set as Set
+import Daml.Script
+import TradeGuard.Types
+import TradeGuard.Holding
+import TradeGuard.Instrument
+import TradeGuard.Settlement
+import TradeGuard.Trade
+import TradeGuard.Agent
+
+-- | Orchestrate atomic settlement for an approved trade. The agent (coordinator)
+--   calls this after a human has created an `ApprovedAction`. It:
+--     1. verifies a human approval exists for this trade,
+--     2. locks both legs' holdings to the batch,
+--     3. assembles + allocates the settlement batch,
+--     4. settles atomically (lock -> swap), and
+--     5. marks the approval executed.
+--
+--   Returns the settled holding cids (asset now buyer's, cash now seller's).
+orchestrateSettlement : Text -> Script SettlementResult
+orchestrateSettlement tradeIdText = do
+  let tradeId = Id tradeIdText
+
+  -- Resolve parties from the ledger by display name (the agent knows these).
+  knownParties <- listKnownParties
+  let getP n = (fromSome (findParty n knownParties))
+      coordinator = getP "Coordinator"
+      seller = getP "Seller"
+      buyer = getP "Buyer"
+      registry = getP "Registry"
+      bank = getP "Bank"
+
+  -- 1. Verify a human approval exists (the governance gate).
+  approvals <- query @ApprovedAction coordinator
+  let matching = filter (\(_, a) -> a.tradeId == tradeId && a.decision == "SETTLE") approvals
+  assertMsg ("no human-approved SETTLE action for " <> tradeIdText) (not (null matching))
+
+  -- 2. Find the AcceptedTrade for this trade.
+  accepteds <- query @AcceptedTrade coordinator
+  let acc = filter (\(_, t) -> t.tradeId == tradeId) accepteds
+  assertMsg ("no AcceptedTrade for " <> tradeIdText) (not (null acc))
+  let (acceptedCid, accepted) = head acc
+
+  -- 3. Assemble the batch (coordinator authority).
+  batchCid <- submit coordinator do exerciseCmd acceptedCid AssembleBatch
+
+  -- 4. Lock both legs. We re-find the current holdings for sender of each leg.
+  let [assetLeg, cashLeg] = accepted.legs
+  assetHCid <- findHolding registry seller assetLeg.instrument
+  cashHCid <- findHolding bank buyer cashLeg.instrument
+  assetLocked <- submitMulti [registry, seller] [] do
+    exerciseCmd assetHCid LockHolding with locker = coordinator; context = tradeIdText
+  cashLocked <- submitMulti [bank, buyer] [] do
+    exerciseCmd cashHCid LockHolding with locker = coordinator; context = tradeIdText
+
+  let allocs = [ AllocatedLeg with leg = assetLeg; holdingCid = assetLocked
+               , AllocatedLeg with leg = cashLeg; holdingCid = cashLocked ]
+
+  -- 5. Allocate then settle atomically.
+  batchAlloc <- submit coordinator do
+    exerciseCmd batchCid Allocate with allocations = allocs
+  result <- submitMulti [coordinator, seller, buyer] [] do
+    exerciseCmd batchAlloc Settle with allocations = allocs
+
+  -- 6. Mark the approval executed.
+  forA_ matching $ \(cid, _) ->
+    submit coordinator do exerciseCmd cid MarkExecuted
+
+  pure result
+
+-- | No-arg entrypoint for the CLI (settles the seeded live trade).
+orchestrateLive : Script SettlementResult
+orchestrateLive = orchestrateSettlement "TG-LIVE-001"
+
+-- | Find a party by display name from listKnownParties.
+findParty : Text -> [PartyDetails] -> Optional Party
+findParty n details =
+  case filter (\d -> optional False (== n) d.displayName) details of
+    (d :: _) -> Some d.party
+    [] -> None
+
+-- | Find the (unlocked) holding owned by `owner` at `custodian` of an instrument.
+findHolding : Party -> Party -> InstrumentKey -> Script (ContractId Holding)
+findHolding custodian owner instr = do
+  hs <- query @Holding custodian
+  let match = filter (\(_, h) ->
+        h.account.owner == owner &&
+        h.account.custodian == custodian &&
+        h.instrument == instr &&
+        optional True (const False) h.lock) hs   -- unlocked only
+  case match of
+    ((cid, _) :: _) -> pure cid
+    [] -> abort ("no unlocked holding for owner " <> show owner)

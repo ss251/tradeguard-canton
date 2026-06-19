@@ -1,0 +1,83 @@
+-- Copyright (c) 2026 TradeGuard. SPDX-License-Identifier: Apache-2.0
+--
+-- | Test setup helpers: build a complete trade-finance world (parties, instruments,
+--   accounts, holdings) so each test starts from a realistic institutional state.
+module TradeGuard.Test.Setup where
+
+import DA.Optional (fromSome)
+import qualified DA.Set as Set
+import Daml.Script
+import TradeGuard.Types
+import TradeGuard.Holding
+import TradeGuard.Instrument
+import TradeGuard.Settlement (SettlementAuthority(..))
+
+-- | The cast of parties in a TradeGuard scenario.
+data World = World
+  with
+    seller : Party
+    buyer : Party
+    regulator : Party
+    registry : Party    -- ^ asset custodian + depository + delivery attester
+    bank : Party        -- ^ cash custodian + depository
+    coordinator : Party -- ^ settlement coordinator (agent principal)
+    outsider : Party    -- ^ a non-stakeholder, for privacy tests
+    cashInstrument : InstrumentKey
+    assetInstrument : InstrumentKey
+
+-- | Allocate all parties with readable hints.
+allocateParties : Script World
+allocateParties = do
+  seller <- allocatePartyWithHint "Seller" (PartyIdHint "Seller")
+  buyer <- allocatePartyWithHint "Buyer" (PartyIdHint "Buyer")
+  regulator <- allocatePartyWithHint "Regulator" (PartyIdHint "Regulator")
+  registry <- allocatePartyWithHint "Registry" (PartyIdHint "Registry")
+  bank <- allocatePartyWithHint "Bank" (PartyIdHint "Bank")
+  coordinator <- allocatePartyWithHint "Coordinator" (PartyIdHint "Coordinator")
+  outsider <- allocatePartyWithHint "Outsider" (PartyIdHint "Outsider")
+  let cashInstrument = InstrumentKey with
+        depository = bank; issuer = bank; id = Id "USD"; version = "1"
+        holdingStandard = TransferableFungible
+      assetInstrument = InstrumentKey with
+        depository = registry; issuer = registry; id = Id "BillOfLading-7741"; version = "1"
+        holdingStandard = Transferable
+  pure World with ..
+
+-- | Register both instruments on-ledger.
+registerInstruments : World -> Script (ContractId Instrument, ContractId Instrument)
+registerInstruments w = do
+  cashI <- submit w.bank do
+    createCmd Instrument with
+      depository = w.bank; issuer = w.bank
+      id = Id "USD"; version = "1"; holdingStandard = TransferableFungible
+      description = "US Dollar tokenized deposit"
+      observers = Set.empty
+  assetI <- submit w.registry do
+    createCmd Instrument with
+      depository = w.registry; issuer = w.registry
+      id = Id "BillOfLading-7741"; version = "1"; holdingStandard = Transferable
+      description = "Bill of Lading 7741 - maritime cargo title"
+      observers = Set.empty
+  pure (cashI, assetI)
+
+-- | Create an account for (custodian, owner).
+makeAccount : Party -> Party -> Text -> Script ()
+makeAccount custodian owner accId = do
+  _ <- submitMulti [custodian, owner] [] do
+    createCmd Account with
+      custodian; owner; id = Id accId; observers = Set.empty
+  pure ()
+
+-- | Issue a holding of `amount` of `instrument` to `owner` at `custodian`.
+issueHolding : Party -> ContractId Instrument -> Party -> Party -> Text -> Decimal -> Script (ContractId Holding)
+issueHolding issuer instrI custodian owner accId amount =
+  submitMulti [issuer, custodian, owner] [] do
+    exerciseCmd instrI Issue with
+      custodian; owner; accountId = Id accId; amount
+
+-- | Grant settlement authority from a custodian to the coordinator (done once,
+--   institutionally — the bank/registry pre-authorizes its settlement operator).
+grantSettlementAuthority : Party -> Party -> Script (ContractId SettlementAuthority)
+grantSettlementAuthority custodian coordinator =
+  submit custodian do
+    createCmd SettlementAuthority with custodian; coordinator

@@ -1,0 +1,160 @@
+-- Copyright (c) 2026 TradeGuard. SPDX-License-Identifier: Apache-2.0
+--
+-- | Ledger initialization scripts for the LIVE sandbox.
+--
+-- Unlike the test scripts (which allocate fresh parties each run), these scripts
+-- run against the running ledger to seed a realistic, demoable state that the
+-- off-chain agent and the UI can observe. Run with:
+--   daml script --dar .daml/dist/tradeguard-1.0.0.dar \
+--     --script-name TradeGuard.Init:initLedger \
+--     --ledger-host localhost --ledger-port 6865 --output-file parties.json
+module TradeGuard.Init where
+
+import DA.Optional (fromOptional)
+import qualified DA.Set as Set
+import Daml.Script
+import TradeGuard.Types
+import TradeGuard.Holding
+import TradeGuard.Instrument
+import TradeGuard.Settlement
+import TradeGuard.Trade
+
+-- (helpers below)
+
+-- | A serializable record of the seeded scenario (party ids + key cids) so the
+--   off-chain agent and UI can be told which parties/contracts to watch.
+data InitResult = InitResult
+  with
+    seller : Party
+    buyer : Party
+    regulator : Party
+    registry : Party
+    bank : Party
+    coordinator : Party
+    outsider : Party
+    proposalCid : ContractId TradeProposal
+    sellerAssetCid : ContractId Holding
+    buyerCashCid : ContractId Holding
+  deriving (Eq, Show)
+
+-- | Get-or-allocate a party by hint (idempotent across re-runs on the same ledger).
+getOrAllocate : Text -> Script Party
+getOrAllocate hint = do
+  existing <- listKnownParties
+  let match = filter (\d -> optional False (== hint) d.displayName) existing
+  case match of
+    (d :: _) -> pure d.party
+    [] -> allocatePartyWithHint hint (PartyIdHint hint)
+
+-- | Seed a complete trade-finance scenario on the live ledger and return the
+--   handles. Idempotent on parties; always creates a fresh proposal + holdings.
+initLedger : Script InitResult
+initLedger = do
+  seller <- getOrAllocate "Seller"
+  buyer <- getOrAllocate "Buyer"
+  regulator <- getOrAllocate "Regulator"
+  registry <- getOrAllocate "Registry"
+  bank <- getOrAllocate "Bank"
+  coordinator <- getOrAllocate "Coordinator"
+  outsider <- getOrAllocate "Outsider"
+
+  let cashInstrument = InstrumentKey with
+        depository = bank; issuer = bank; id = Id "USD"; version = "1"
+        holdingStandard = TransferableFungible
+      assetInstrument = InstrumentKey with
+        depository = registry; issuer = registry; id = Id "BillOfLading-7741"; version = "1"
+        holdingStandard = Transferable
+
+  -- register instruments (idempotent: skip if the key already exists)
+  let cashKey = InstrumentKey with depository = bank; issuer = bank; id = Id "USD"; version = "1"; holdingStandard = TransferableFungible
+      assetKey = InstrumentKey with depository = registry; issuer = registry; id = Id "BillOfLading-7741"; version = "1"; holdingStandard = Transferable
+  existingCash <- queryContractKey @Instrument bank cashKey
+  cashI <- case existingCash of
+    Some (cid, _) -> pure cid
+    None -> submit bank do
+      createCmd Instrument with
+        depository = bank; issuer = bank; id = Id "USD"; version = "1"
+        holdingStandard = TransferableFungible
+        description = "US Dollar tokenized deposit"; observers = Set.empty
+  existingAsset <- queryContractKey @Instrument registry assetKey
+  assetI <- case existingAsset of
+    Some (cid, _) -> pure cid
+    None -> submit registry do
+      createCmd Instrument with
+        depository = registry; issuer = registry; id = Id "BillOfLading-7741"; version = "1"
+        holdingStandard = Transferable
+        description = "Bill of Lading 7741 - maritime cargo title"; observers = Set.empty
+
+  -- accounts (idempotent)
+  let mkAcct cust own accId = do
+        let k = AccountKey with custodian = cust; owner = own; id = Id accId
+        existing <- queryContractKey @Account cust k
+        case existing of
+          Some _ -> pure ()
+          None -> do
+            _ <- submitMulti [cust, own] [] do
+              createCmd Account with custodian = cust; owner = own; id = Id accId; observers = Set.empty
+            pure ()
+  mkAcct registry seller "seller-asset"
+  mkAcct registry buyer "buyer-asset"
+  mkAcct bank buyer "buyer-cash"
+  mkAcct bank seller "seller-cash"
+
+  -- initial holdings: seller owns the asset, buyer owns the cash (fresh each run)
+  sellerAssetCid <- submitMulti [registry, seller] [] do
+    exerciseCmd assetI Issue with custodian = registry; owner = seller; accountId = Id "seller-asset"; amount = 1.0
+  buyerCashCid <- submitMulti [bank, buyer] [] do
+    exerciseCmd cashI Issue with custodian = bank; owner = buyer; accountId = Id "buyer-cash"; amount = 100.0
+
+  -- custodians grant settlement authority to the coordinator (idempotent)
+  let mkAuth cust = do
+        existing <- queryContractKey @SettlementAuthority cust (cust, coordinator)
+        case existing of
+          Some _ -> pure ()
+          None -> do
+            _ <- submit cust do createCmd SettlementAuthority with custodian = cust; coordinator
+            pure ()
+  mkAuth registry
+  mkAuth bank
+
+  -- seller posts a trade proposal (this is what the agent will detect)
+  proposalCid <- submit seller do
+    createCmd TradeProposal with
+      seller; buyer; regulator = Some regulator
+      registry; bank; tradeId = Id "TG-LIVE-001"
+      assetInstrument; assetAmount = 1.0
+      cashInstrument; price = 100.0
+      requiresAttestation = True
+      sellerAssetCid
+
+  -- registry posts the delivery attestation (condition the agent waits for)
+  _ <- submit registry do
+    createCmd DeliveryAttestation with
+      registry; tradeId = Id "TG-LIVE-001"; instrumentId = Id "BillOfLading-7741"
+      detail = "Bill of Lading 7741 endorsed by Port Registry"
+      observers = Set.fromList [seller, buyer, coordinator]
+
+  pure InitResult with ..
+
+-- | Like `initLedger`, but additionally drives the trade to the AcceptedTrade stage
+--   (buyer accepts), so the off-chain agent finds a trade that is *ready to settle*
+--   and can issue a SettlementRecommendation. Returns the AcceptedTrade cid too.
+data AcceptedInit = AcceptedInit
+  with
+    base : InitResult
+    acceptedCid : ContractId AcceptedTrade
+  deriving (Eq, Show)
+
+initWithAccepted : Script AcceptedInit
+initWithAccepted = do
+  base <- initLedger
+  -- buyer accepts the proposal -> AcceptedTrade (what the agent monitors for settlement)
+  acceptedCid <- submit base.buyer do
+    exerciseCmd base.proposalCid Accept with
+      coordinator = base.coordinator
+      buyerCashCid = base.buyerCashCid
+      sellerAccountId = Id "seller-asset"
+      buyerAssetAccountId = Id "buyer-asset"
+      buyerCashAccountId = Id "buyer-cash"
+      sellerCashAccountId = Id "seller-cash"
+  pure AcceptedInit with base; acceptedCid

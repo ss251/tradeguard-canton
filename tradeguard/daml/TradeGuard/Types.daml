@@ -1,0 +1,81 @@
+-- Copyright (c) 2026 TradeGuard. SPDX-License-Identifier: Apache-2.0
+--
+-- | Core type vocabulary for TradeGuard.
+--
+-- These mirror the daml-finance v4 type model (Daml.Finance.Interface.Types.Common)
+-- so the model speaks the same institutional language and can later be re-based onto
+-- the real library without reshaping the domain. We keep a self-contained copy so the
+-- core is guaranteed to build and test independently of the heavy library wiring.
+module TradeGuard.Types where
+
+import DA.Set (Set)
+import qualified DA.Set as Set
+
+-- | A set of parties (used for observers / disclosure contexts).
+type Parties = Set Party
+
+-- | A textual identifier (instrument ids, account ids, trade ids).
+newtype Id = Id Text
+  deriving (Eq, Ord)
+
+instance Show Id where
+  show (Id t) = t
+
+-- | The holding standard categorises an instrument by the capabilities its holdings
+--   expose. Mirrors daml-finance's `HoldingStandard`.
+data HoldingStandard
+  = TransferableFungible
+    -- ^ Interchangeable AND transferable between parties via a custodian (e.g. cash).
+  | Transferable
+    -- ^ Transferable but not interchangeable (e.g. a unique title / bill of lading).
+  | Fungible
+    -- ^ Interchangeable but not party-transferable.
+  | BaseHolding
+    -- ^ Basic holding; neither fungible nor transferable.
+  deriving (Eq, Ord, Show)
+
+-- | A unique key for an account at a custodian.
+data AccountKey = AccountKey
+  with
+    custodian : Party
+      -- ^ The account provider (e.g. a bank or registry).
+    owner : Party
+      -- ^ The account owner.
+    id : Id
+      -- ^ Unique identifier for the account.
+  deriving (Eq, Ord, Show)
+
+-- | A unique key for an instrument (the thing being held / settled).
+data InstrumentKey = InstrumentKey
+  with
+    depository : Party
+      -- ^ Party providing depository services for the instrument.
+    issuer : Party
+      -- ^ Issuer of the instrument.
+    id : Id
+      -- ^ Unique identifier for the instrument (e.g. "USD", "BillOfLading-7741").
+    version : Text
+      -- ^ A textual instrument version.
+    holdingStandard : HoldingStandard
+      -- ^ The holding standard the instrument uses.
+  deriving (Eq, Ord, Show)
+
+-- | A dimensioned quantity (an amount of an instrument).
+data Quantity u a = Quantity
+  with
+    unit : u
+      -- ^ The quantity's unit (here, an `InstrumentKey`).
+    amount : a
+      -- ^ A numerical amount.
+  deriving (Eq, Ord, Show)
+
+-- | The canonical quantity used throughout TradeGuard: an amount of an instrument.
+type InstrumentQuantity = Quantity InstrumentKey Decimal
+
+-- | Convenience constructor for an instrument quantity.
+qty : InstrumentKey -> Decimal -> InstrumentQuantity
+qty u a = Quantity with unit = u; amount = a
+
+-- | Helper to build a set of parties from a list.
+toParties : [Party] -> Parties
+toParties = Set.fromList

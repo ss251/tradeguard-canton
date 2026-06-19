@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeGuard — Review &amp; Accept</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --paper:#f3efe6; --paper-edge:#e7e1d3; --ink:#1c1a17; --ink-soft:#6b6358;
+    --rule:#cdc4b0; --oxblood:#7c2128; --seal-green:#2f5d46; --field:#fbfaf6;
+  }
+  body{
+    background:var(--paper); color:var(--ink); font-family:"Inter",sans-serif;
+    line-height:1.5; -webkit-font-smoothing:antialiased;
+    background-image:repeating-linear-gradient(0deg, transparent, transparent 31px, rgba(28,26,23,.03) 31px, rgba(28,26,23,.03) 32px);
+    min-height:100vh;
+  }
+  .sheet{max-width:1180px;margin:0 auto;padding:0 40px}
+
+  .steps{display:flex;align-items:center;padding:28px 0 0;font-family:"IBM Plex Mono";font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+  .steps .s{color:var(--ink-soft);display:flex;align-items:center;gap:8px}
+  .steps .s .n{width:20px;height:20px;border:1.5px solid var(--rule);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px}
+  .steps .s.done .n{border-color:var(--seal-green);color:var(--seal-green)}
+  .steps .s.active{color:var(--ink)} .steps .s.active .n{border-color:var(--oxblood);color:var(--oxblood);font-weight:600}
+  .steps .sep{flex:1;height:1px;background:var(--rule);margin:0 14px;min-width:24px;max-width:60px}
+  .steps .sep.done{background:var(--seal-green)}
+
+  .mast{display:flex;justify-content:space-between;align-items:flex-end;padding:22px 0 16px;border-bottom:2px solid var(--ink)}
+  .mast .mark{font-weight:700;font-size:13px;letter-spacing:.28em;text-transform:uppercase;color:var(--oxblood)}
+  .mast h1{font-family:"Newsreader",serif;font-weight:500;font-size:42px;letter-spacing:-.01em;line-height:1;margin-top:6px}
+  .mast .by{text-align:right;font-family:"IBM Plex Mono";font-size:11px;color:var(--ink-soft);line-height:1.8}
+  .mast .by b{color:var(--ink)}
+  .incoming{display:inline-block;font-family:"IBM Plex Mono";font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--oxblood);border:1.5px solid var(--oxblood);padding:3px 9px;margin-top:8px}
+
+  .thesis{font-family:"Newsreader",serif;font-size:21px;font-style:italic;padding:22px 0 26px;max-width:70ch;color:var(--ink-soft)}
+
+  .grid{display:grid;grid-template-columns:1fr 400px;gap:0;border:1.5px solid var(--ink)}
+  .main{padding:0}
+  .from{padding:18px 26px;border-bottom:1px solid var(--rule);font-family:"IBM Plex Mono";font-size:12px;color:var(--ink-soft)}
+  .from b{color:var(--ink)}
+
+  /* the swap, big and central — what you give vs get */
+  .swap{display:grid;grid-template-columns:1fr 110px 1fr;align-items:stretch;border-bottom:1px solid var(--rule)}
+  .sleg{padding:28px 26px}
+  .sleg.give{background:var(--field)}
+  .sleg .tag{font-family:"IBM Plex Mono";font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px;display:flex;align-items:center;gap:7px}
+  .sleg .tag .ar{font-size:13px}
+  .sleg .big{font-family:"Newsreader",serif;font-size:32px;font-weight:500;line-height:1.05}
+  .sleg .sub{font-family:"IBM Plex Mono";font-size:11px;color:var(--ink-soft);margin-top:8px}
+  .hinge{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;position:relative;background:var(--paper-edge)}
+  .hinge::before{content:"";position:absolute;top:24px;bottom:24px;left:50%;width:1px;background:var(--rule)}
+  .hinge .ring{width:54px;height:54px;border-radius:50%;border:1.5px solid var(--oxblood);display:flex;align-items:center;justify-content:center;background:var(--paper);color:var(--oxblood);font-size:23px;font-family:"Newsreader",serif;position:relative;z-index:1}
+  .hinge .cap{font-family:"IBM Plex Mono";font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--oxblood);font-weight:600}
+
+  /* fund selection */
+  .fund{padding:22px 26px}
+  .fund .h{font-family:"IBM Plex Mono";font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:14px}
+  .holding{display:flex;align-items:center;gap:14px;padding:14px 16px;border:1.5px solid var(--ink);border-radius:3px;background:var(--field);cursor:pointer}
+  .holding .radio{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--ink);flex:none;position:relative}
+  .holding .radio::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--ink)}
+  .holding .info{font-family:"IBM Plex Mono";font-size:13px}
+  .holding .info .sub{color:var(--ink-soft);font-size:11px;margin-top:3px;display:block}
+  .holding .bal{margin-left:auto;font-family:"Newsreader",serif;font-size:18px}
+  .holding.short{border-color:var(--oxblood);background:#fbf2f1;cursor:not-allowed;opacity:.85}
+  .holding.short .radio{border-color:var(--oxblood)}.holding.short .radio::after{display:none}
+  .fund .err{font-family:"IBM Plex Mono";font-size:11px;color:var(--oxblood);margin-top:10px;display:none}
+
+  /* right rail: atomicity guarantee — the signature */
+  .rail{background:var(--ink);color:var(--paper);display:flex;flex-direction:column}
+  .rail .rh{padding:18px 22px;border-bottom:1px solid rgba(243,239,230,.16);font-family:"IBM Plex Mono";font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#9a9183}
+  .rail .body{padding:22px;flex:1}
+  .rail .guar{font-family:"Newsreader",serif;font-size:23px;line-height:1.25;margin-bottom:16px}
+  .rail .guar .hl{color:#e8a3a8;font-style:italic}
+  .seq{font-family:"IBM Plex Mono";font-size:11.5px;line-height:1.7;color:#d8d1c4}
+  .seq .step{display:flex;gap:10px;margin:9px 0}
+  .seq .step .b{color:#7fc59a;flex:none}
+  .seq .step b{color:var(--paper)}
+  .rail .rule-note{margin-top:18px;padding-top:16px;border-top:1px solid rgba(243,239,230,.16);font-family:"IBM Plex Mono";font-size:10.5px;color:#9a9183;line-height:1.6}
+  .rail .rule-note b{color:#e8a3a8}
+
+  .actions{display:flex;gap:12px;align-items:center;padding:18px 22px;border-top:1px solid rgba(243,239,230,.16)}
+  .btn{font-family:"Inter";font-weight:600;font-size:13px;padding:11px 18px;border-radius:3px;cursor:pointer;border:1.5px solid;transition:.12s}
+  .btn.reject{background:transparent;color:#d8d1c4;border-color:rgba(243,239,230,.3)}
+  .btn.reject:hover{color:var(--paper);border-color:var(--paper)}
+  .btn.accept{flex:1;background:var(--paper);color:var(--ink);border-color:var(--paper)}
+  .btn.accept:hover{background:#fff}
+
+  footer{font-family:"IBM Plex Mono";font-size:10.5px;color:var(--ink-soft);text-align:center;padding:26px 0 50px;letter-spacing:.03em}
+
+  /* toast on accept */
+  .toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%) translateY(20px);opacity:0;background:var(--ink);color:var(--paper);padding:14px 22px;border-radius:4px;font-family:"IBM Plex Mono";font-size:12px;display:flex;align-items:center;gap:12px;transition:.3s;pointer-events:none;border-left:3px solid var(--seal-green)}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast .ok{color:#7fc59a;font-weight:600}
+
+  @media (max-width:880px){
+    .sheet{padding:0 20px}.grid{grid-template-columns:1fr}.rail{border-top:1px solid var(--rule)}
+    .mast h1{font-size:32px}.swap{grid-template-columns:1fr}
+    .hinge{padding:12px}.hinge::before{display:none}
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="steps">
+    <div class="s done"><span class="n">✓</span>Draft</div><div class="sep done"></div>
+    <div class="s active"><span class="n">2</span>Accept</div><div class="sep"></div>
+    <div class="s"><span class="n">3</span>Authorize</div><div class="sep"></div>
+    <div class="s"><span class="n">4</span>Settle</div>
+  </div>
+
+  <div class="mast">
+    <div><div class="mark">TradeGuard · Canton</div><h1>Review &amp; Accept</h1></div>
+    <div class="by">REVIEWING AS<br><b>Importer Co.</b> · Buyer<br>party ····2210<br><span class="incoming">Incoming proposal</span></div>
+  </div>
+
+  <p class="thesis">Exporter Ltd. has signed an offer. Accepting settles it atomically — your cash and their title change hands in one transaction, or not at all.</p>
+
+  <div class="grid">
+    <div class="main">
+      <div class="from">From <b>Exporter Ltd.</b> · proposal <b>#TG-0042</b> · received 14:00 UTC</div>
+
+      <div class="swap">
+        <div class="sleg give">
+          <div class="tag"><span class="ar">↑</span>You give</div>
+          <div class="big">$100,000.00</div>
+          <div class="sub">USD · from your tokenized deposit</div>
+        </div>
+        <div class="hinge"><div class="ring">⇄</div><div class="cap">Atomic</div></div>
+        <div class="sleg get">
+          <div class="tag"><span class="ar">↓</span>You receive</div>
+          <div class="big">Bill of Lading 7741</div>
+          <div class="sub">maritime cargo title · 1 unit</div>
+        </div>
+      </div>
+
+      <div class="fund">
+        <div class="h">Fund the cash leg — choose a holding</div>
+        <label class="holding">
+          <span class="radio"></span>
+          <span class="info">Bank A — tokenized deposit ····2210<span class="sub">balance $148,500 USD</span></span>
+          <span class="bal">$100,000</span>
+        </label>
+        <div style="height:10px"></div>
+        <label class="holding short">
+          <span class="radio"></span>
+          <span class="info">Bank B — tokenized deposit ····5567<span class="sub">balance $42,000 USD — insufficient</span></span>
+          <span class="bal" style="color:var(--oxblood)">short</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- RIGHT RAIL: the atomicity guarantee -->
+    <aside class="rail">
+      <div class="rh">What "accept" does</div>
+      <div class="body">
+        <div class="guar">Both legs settle <span class="hl">together</span>, or <span class="hl">neither moves</span>.</div>
+        <div class="seq">
+          <div class="step"><span class="b">1</span><span>Your <b>$100,000</b> and their <b>title</b> are locked into one transaction.</span></div>
+          <div class="step"><span class="b">2</span><span>Canton validates both legs and ownership.</span></div>
+          <div class="step"><span class="b">3</span><span>They swap <b>simultaneously</b> — final and irreversible.</span></div>
+          <div class="step"><span class="b">✕</span><span>If anything fails, the whole thing reverts. You're never out cash without the title.</span></div>
+        </div>
+        <div class="rule-note">This eliminates <b>settlement risk</b> — the gap where you've paid but not received. No escrow, no intermediary, no letter of credit.</div>
+      </div>
+      <div class="actions">
+        <button class="btn reject">Reject</button>
+        <button class="btn accept" id="accept">Accept &amp; Settle →</button>
+      </div>
+    </aside>
+  </div>
+
+  <footer>Accepting exercises the Accept choice on the TradeProposal: it brings your CashHolding and atomically transfers both legs inside one Daml transaction, producing a settled Trade.</footer>
+</div>
+
+<div class="toast" id="toast"><span class="ok">✓ Settled</span><span>Trade #TG-0042 finalized atomically. Title received, cash transferred.</span></div>
+
+<script>
+const accept = document.getElementById("accept");
+const toast = document.getElementById("toast");
+accept.addEventListener("click", ()=>{
+  accept.textContent = "Settling…";
+  setTimeout(()=>{
+    accept.textContent = "Settled ✓";
+    accept.style.background = "#7fc59a"; accept.style.borderColor = "#7fc59a";
+    toast.classList.add("show");
+    setTimeout(()=>toast.classList.remove("show"), 4000);
+  }, 700);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeGuard — Lo-Fi Wireframes</title>
+<style>
+  /* ---- WIREFRAME AESTHETIC: greyscale, boxes, annotations. No product styling on purpose. ---- */
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Helvetica Neue",Arial,sans-serif;background:#e9e9e9;color:#222;line-height:1.45;padding:0 0 80px}
+  .topbar{background:#1a1a1a;color:#fff;padding:16px 28px;position:sticky;top:0;z-index:50}
+  .topbar h1{font-size:17px;font-weight:700}
+  .topbar p{font-size:12px;color:#aaa;margin-top:2px}
+  .nav{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+  .nav a{font-size:11px;color:#ccc;border:1px solid #444;padding:4px 10px;border-radius:3px;text-decoration:none;cursor:pointer}
+  .nav a:hover{background:#333;color:#fff}
+
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 24px}
+  .screen{background:#fff;border:1px solid #bbb;border-radius:4px;margin-bottom:40px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  .screen-label{background:#333;color:#fff;font-size:12px;font-weight:700;padding:8px 16px;display:flex;justify-content:space-between;align-items:center;letter-spacing:.3px}
+  .screen-label .meta{font-weight:400;color:#bbb;font-size:11px}
+  .frame{padding:0;}
+
+  /* fake browser/app chrome */
+  .appbar{border-bottom:2px solid #222;padding:12px 18px;display:flex;align-items:center;justify-content:space-between;background:#f4f4f4}
+  .appbar .logo{font-weight:700;font-size:14px}
+  .appbar .right{display:flex;gap:14px;align-items:center;font-size:12px;color:#555}
+  .pill{border:1px solid #999;border-radius:20px;padding:3px 12px;font-size:11px;color:#444;background:#fff}
+  .body{padding:22px 24px;min-height:340px}
+
+  /* wireframe primitives */
+  .box{border:1.5px solid #999;border-radius:3px;background:#f7f7f7;padding:14px;margin-bottom:14px}
+  .box.dashed{border-style:dashed;background:#fafafa}
+  .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#888;margin-bottom:6px}
+  .field{border:1.5px solid #aaa;background:#fff;border-radius:3px;height:38px;display:flex;align-items:center;padding:0 12px;color:#999;font-size:13px;margin-bottom:12px}
+  .field.sm{height:32px}
+  .btn{display:inline-block;border:1.5px solid #333;background:#333;color:#fff;border-radius:3px;padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer}
+  .btn.sec{background:#fff;color:#333}
+  .btn.ghost{background:#fff;color:#999;border-color:#bbb}
+  .row{display:flex;gap:14px}
+  .row > *{flex:1}
+  .imgph{background:repeating-linear-gradient(45deg,#eee,#eee 8px,#e3e3e3 8px,#e3e3e3 16px);border:1.5px solid #bbb;border-radius:3px;display:flex;align-items:center;justify-content:center;color:#999;font-size:11px}
+  .text-line{height:9px;background:#ddd;border-radius:2px;margin:5px 0}
+  .text-line.s{width:60%}.text-line.m{width:80%}.text-line.l{width:100%}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid #e0e0e0}
+  th{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#888;border-bottom:2px solid #ccc}
+  td .chip{font-size:10px;border:1px solid #aaa;border-radius:10px;padding:1px 8px;color:#555}
+
+  /* annotations — the wireframe callouts */
+  .anno{border-left:3px solid #d33;background:#fff4f4;padding:8px 12px;font-size:11px;color:#a00;margin:10px 0;border-radius:0 3px 3px 0}
+  .anno b{color:#700}
+  .note{font-size:11px;color:#777;font-style:italic;margin-top:6px}
+  .states{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  .states .st{font-size:10px;border:1px dashed #aaa;border-radius:3px;padding:4px 9px;color:#777;background:#fafafa}
+
+  /* flow map */
+  .flow{background:#fff;border:1px solid #bbb;border-radius:4px;padding:24px;margin-bottom:40px}
+  .flow h2{font-size:14px;margin-bottom:18px;letter-spacing:.3px}
+  .flowrow{display:flex;align-items:stretch;gap:0;flex-wrap:wrap}
+  .fnode{flex:1;min-width:120px;border:1.5px solid #888;border-radius:4px;padding:12px;background:#f7f7f7;text-align:center;position:relative}
+  .fnode .n{font-size:10px;color:#aaa}
+  .fnode .t{font-size:12px;font-weight:700;margin:3px 0}
+  .fnode .who{font-size:10px;color:#777}
+  .farrow{display:flex;align-items:center;padding:0 6px;color:#888;font-size:20px}
+  .legend{display:flex;gap:18px;margin-top:16px;font-size:11px;color:#666;flex-wrap:wrap}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .sw{width:12px;height:12px;border-radius:2px;display:inline-block;border:1px solid #999}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>TradeGuard — Lo-Fi Wireframes <span style="font-weight:400;color:#888;font-size:12px">v1 · structure & flow, not styling</span></h1>
+  <p>Private atomic DvP for B2B trade finance on Canton. Greyscale on purpose — argue about layout & flow here, not colors.</p>
+  <div class="nav">
+    <a href="#flow">0 · Flow map</a>
+    <a href="#s1">1 · Dashboard</a>
+    <a href="#s2">2 · Create Proposal</a>
+    <a href="#s3">3 · Review & Accept</a>
+    <a href="#s4">4 · Agent Gate</a>
+    <a href="#s5">5 · Settlement (4 views)</a>
+    <a href="#s6">6 · Exception</a>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- FLOW MAP -->
+  <div class="flow" id="flow">
+    <h2>0 · USER FLOW — who does what, and where privacy/atomicity bite</h2>
+    <div class="flowrow">
+      <div class="fnode"><div class="n">SCREEN 2</div><div class="t">Create Proposal</div><div class="who">Seller</div></div>
+      <div class="farrow">→</div>
+      <div class="fnode"><div class="n">SCREEN 3</div><div class="t">Review & Accept</div><div class="who">Buyer</div></div>
+      <div class="farrow">→</div>
+      <div class="fnode"><div class="n">SCREEN 4</div><div class="t">Agent proposes → Human gate</div><div class="who">Agent + approver</div></div>
+      <div class="farrow">→</div>
+      <div class="fnode"><div class="n">SCREEN 5</div><div class="t">Atomic DvP Settlement</div><div class="who">Canton</div></div>
+      <div class="farrow">→</div>
+      <div class="fnode"><div class="n">SCREEN 5</div><div class="t">4 Role Views</div><div class="who">all parties + outsider</div></div>
+    </div>
+    <div class="anno"><b>Exception branch:</b> if delivery isn't attested before the deadline → SCREEN 6 (dispute / expire), no settlement occurs.</div>
+    <div class="legend">
+      <span><span class="sw" style="background:#f7f7f7"></span> standard screen</span>
+      <span><span class="sw" style="background:#fff4f4;border-color:#d33"></span> red callout = privacy / atomicity / governance moment to nail in the demo</span>
+    </div>
+  </div>
+
+  <!-- SCREEN 1: DASHBOARD -->
+  <div class="screen" id="s1">
+    <div class="screen-label">1 · DASHBOARD — trade list <span class="meta">entry screen · states: empty / active / settled / disputed</span></div>
+    <div class="frame">
+      <div class="appbar"><div class="logo">▢ TradeGuard</div><div class="right"><span class="pill">Org: Importer Co.</span><span>▢ account</span></div></div>
+      <div class="body">
+        <div class="row" style="margin-bottom:16px">
+          <div style="flex:3"><div class="field">▢ Search trades…</div></div>
+          <div style="flex:1"><div class="btn" style="width:100%;text-align:center">+ New Proposal</div></div>
+        </div>
+        <table>
+          <tr><th>Trade</th><th>Asset ⇄ Cash</th><th>Counterparty</th><th>Status</th><th>Role</th></tr>
+          <tr><td>#TG-0042</td><td>Bill of Lading 7741 ⇄ $100k</td><td>Exporter Ltd.</td><td><span class="chip">Settled</span></td><td>Buyer</td></tr>
+          <tr><td>#TG-0041</td><td>Invoice 8830 ⇄ $42k</td><td>Acme Supply</td><td><span class="chip">Awaiting accept</span></td><td>Seller</td></tr>
+          <tr><td>#TG-0039</td><td>Warehouse Rcpt ⇄ $250k</td><td>Global Freight</td><td><span class="chip">Disputed</span></td><td>Buyer</td></tr>
+        </table>
+        <div class="states">
+          <span class="st">STATE: empty → "No trades yet — create your first proposal"</span>
+          <span class="st">STATE: loading → skeleton rows</span>
+          <span class="st">STATE: 1000+ → pagination / filter by status+role</span>
+        </div>
+        <div class="anno"><b>Privacy note:</b> this list is each party's OWN Active Contract Set — read via JSON Ledger API / PQS. You only see trades you're a party to. No global feed exists.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN 2: CREATE PROPOSAL -->
+  <div class="screen" id="s2">
+    <div class="screen-label">2 · CREATE PROPOSAL — seller <span class="meta">maps to TradeProposal template</span></div>
+    <div class="frame">
+      <div class="appbar"><div class="logo">▢ TradeGuard</div><div class="right"><span>← back to dashboard</span></div></div>
+      <div class="body">
+        <div class="row">
+          <div>
+            <div class="box">
+              <div class="lbl">Asset leg (what you deliver)</div>
+              <div class="field">▾ Select asset holding (Bill of Lading 7741)</div>
+              <div class="note">pulled from your owned AssetHolding contracts</div>
+            </div>
+            <div class="box">
+              <div class="lbl">Price (cash leg you receive)</div>
+              <div class="row"><div class="field sm">$ 100,000</div><div class="field sm">▾ USD</div></div>
+            </div>
+          </div>
+          <div>
+            <div class="box">
+              <div class="lbl">Counterparty (buyer)</div>
+              <div class="field">▾ Importer Co. — party id ▢▢▢…</div>
+              <div class="lbl" style="margin-top:10px">Regulator / observer (optional)</div>
+              <div class="field">▾ FCA (UK)</div>
+              <div class="anno"><b>Selective disclosure set HERE:</b> who you name as signatory vs observer decides who can ever see this trade. This is the privacy model as a UI choice.</div>
+            </div>
+            <div class="box dashed">
+              <div class="lbl">Optional — conditional delivery</div>
+              <div class="field sm">☐ Require delivery attestation before settle</div>
+            </div>
+          </div>
+        </div>
+        <div style="text-align:right;margin-top:6px"><span class="btn ghost">Cancel</span> &nbsp; <span class="btn">Sign & Send Proposal →</span></div>
+        <div class="states"><span class="st">STATE: validation error → "price must be > 0"</span><span class="st">STATE: submitting → spinner on button</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN 3: REVIEW & ACCEPT -->
+  <div class="screen" id="s3">
+    <div class="screen-label">3 · REVIEW & ACCEPT — buyer <span class="meta">exercises Accept choice · brings the cash leg</span></div>
+    <div class="frame">
+      <div class="appbar"><div class="logo">▢ TradeGuard</div><div class="right"><span class="pill">Incoming proposal</span></div></div>
+      <div class="body">
+        <div class="box">
+          <div class="lbl">Proposal from Exporter Ltd.</div>
+          <div class="row">
+            <div class="box" style="margin:0"><div class="lbl">You receive</div><div class="text-line l"></div><div class="text-line m"></div><div style="font-size:13px;margin-top:6px">Bill of Lading 7741</div></div>
+            <div style="display:flex;align-items:center;justify-content:center;font-size:22px;color:#888">⇄</div>
+            <div class="box" style="margin:0"><div class="lbl">You pay</div><div class="text-line l"></div><div class="text-line s"></div><div style="font-size:13px;margin-top:6px">$100,000 USD</div></div>
+          </div>
+        </div>
+        <div class="box">
+          <div class="lbl">Select your cash holding to fund (the cash leg)</div>
+          <div class="field">▾ Tokenized deposit — Bank A — $100,000 available</div>
+          <div class="anno"><b>Atomicity preview:</b> "On accept, your cash and the title swap in a SINGLE transaction. If either leg fails, neither moves." — this sentence is the Herstatt-risk pitch, surfaced in-product.</div>
+        </div>
+        <div style="text-align:right"><span class="btn sec">Reject</span> &nbsp; <span class="btn">Accept & Settle →</span></div>
+        <div class="states"><span class="st">STATE: insufficient funds → cash dropdown disabled + warning</span><span class="st">STATE: proposal expired</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN 4: AGENT GATE -->
+  <div class="screen" id="s4">
+    <div class="screen-label">4 · AGENT APPROVAL GATE <span class="meta">the governance story — agent proposes, human disposes</span></div>
+    <div class="frame">
+      <div class="appbar"><div class="logo">▢ TradeGuard</div><div class="right"><span class="pill">Agent activity</span></div></div>
+      <div class="body">
+        <div class="box dashed">
+          <div class="lbl">🤖 Settlement Agent — off-chain, governed</div>
+          <div class="text-line l"></div>
+          <div style="font-size:13px;margin:8px 0">Detected: delivery attestation received for #TG-0042.<br>Prepared: atomic DvP settlement command. <b>Status: awaiting human approval — NOT executed.</b></div>
+        </div>
+        <div class="box">
+          <div class="lbl">Proposed action (read-only preview)</div>
+          <div class="text-line m"></div><div class="text-line l"></div><div class="text-line s"></div>
+        </div>
+        <div style="text-align:right"><span class="btn ghost">Reject suggestion</span> &nbsp; <span class="btn">Approve & Submit →</span></div>
+        <div class="anno"><b>Pitch-critical:</b> the agent can NEVER move money on its own. Authorization stays with Daml signatories; the agent only proposes. This screen is what makes TradFi judges trust the AI angle.</div>
+        <div class="states"><span class="st">STATE: no pending suggestions → "Agent idle"</span><span class="st">STATE: auto-rules mode (within limits) — out of MVP scope</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN 5: SETTLEMENT 4 VIEWS -->
+  <div class="screen" id="s5">
+    <div class="screen-label">5 · SETTLEMENT RESULT — 4 role views (THE DEMO MONEY SHOT) <span class="meta">same tx, four truths · role toggle</span></div>
+    <div class="frame">
+      <div class="appbar"><div class="logo">▢ TradeGuard</div><div class="right"><span class="pill">Viewing as: ▾ Buyer</span></div></div>
+      <div class="body">
+        <div class="anno"><b>Interaction:</b> one toggle switches the viewer role. The card below re-renders to show ONLY what that party is entitled to. Hi-fi version of THIS screen comes after lo-fi sign-off.</div>
+        <div class="row">
+          <div class="box"><div class="lbl">Buyer view</div><div style="font-size:12px">cash out ✓ · title in ✓<br>own legs in full</div></div>
+          <div class="box"><div class="lbl">Seller view</div><div style="font-size:12px">title out ✓ · cash in ✓<br>own legs in full</div></div>
+        </div>
+        <div class="row">
+          <div class="box"><div class="lbl">Regulator (observer)</div><div style="font-size:12px">"VALID settlement finalized"<br>read-only, scoped disclosure</div></div>
+          <div class="box dashed" style="background:#f0f0f0"><div class="lbl">Outsider</div><div style="font-size:12px;color:#999">🔒 Nothing. Query returns <b>None</b>.<br>not a party → no data</div></div>
+        </div>
+        <div class="anno"><b>This is the whole thesis in one screen.</b> The 4 panels must be visibly, provably different — narrate it as Canton protocol-level privacy, not an app filter.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN 6: EXCEPTION -->
+  <div class="screen" id="s6">
+    <div class="screen-label">6 · EXCEPTION / DISPUTE <span class="meta">the path most teams forget — shows operational realism</span></div>
+    <div class="frame">
+      <div class="appbar"><div class="logo">▢ TradeGuard</div><div class="right"><span class="pill" style="border-color:#c33;color:#c33">Action needed</span></div></div>
+      <div class="body">
+        <div class="box" style="border-color:#c66;background:#fdf3f3">
+          <div class="lbl" style="color:#a44">Trade #TG-0039 — delivery not attested by deadline</div>
+          <div style="font-size:13px">Settlement did NOT occur. Cash and title both remain with original owners (atomicity = no half-settled state).</div>
+        </div>
+        <div class="box">
+          <div class="lbl">Resolution options</div>
+          <div class="row"><div class="btn sec" style="text-align:center">Extend deadline</div><div class="btn sec" style="text-align:center">Cancel & release</div><div class="btn sec" style="text-align:center">Escalate to regulator</div></div>
+        </div>
+        <div class="anno"><b>Why it matters:</b> TradFi judges ask "what happens when it goes wrong?" Having a dispute path = practitioner credibility. Most demos only show the happy path and lose points here.</div>
+        <div class="states"><span class="st">STATE: deadline approaching → countdown warning on dashboard</span></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

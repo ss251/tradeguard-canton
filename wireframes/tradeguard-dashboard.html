@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeGuard — Trades</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --paper:#f3efe6; --paper-edge:#e7e1d3; --ink:#1c1a17; --ink-soft:#6b6358;
+    --rule:#cdc4b0; --oxblood:#7c2128; --seal-green:#2f5d46; --field:#fbfaf6; --amber:#9a6b1f;
+  }
+  body{
+    background:var(--paper); color:var(--ink); font-family:"Inter",sans-serif;
+    line-height:1.5; -webkit-font-smoothing:antialiased;
+    background-image:repeating-linear-gradient(0deg, transparent, transparent 31px, rgba(28,26,23,.03) 31px, rgba(28,26,23,.03) 32px);
+    min-height:100vh;
+  }
+  .sheet{max-width:1180px;margin:0 auto;padding:0 40px}
+
+  /* top bar */
+  .topbar{display:flex;align-items:center;justify-content:space-between;padding:24px 0 20px;border-bottom:2px solid var(--ink)}
+  .brand{font-weight:700;font-size:15px;letter-spacing:.1em;text-transform:uppercase}
+  .brand .ox{color:var(--oxblood)}
+  .topbar .acct{display:flex;align-items:center;gap:16px;font-family:"IBM Plex Mono";font-size:11px;color:var(--ink-soft)}
+  .topbar .acct .org{border:1.5px solid var(--rule);border-radius:20px;padding:5px 13px;color:var(--ink)}
+  .topbar .acct .av{width:30px;height:30px;border-radius:50%;background:var(--ink);color:var(--paper);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;font-family:"Inter"}
+
+  .head{display:flex;justify-content:space-between;align-items:flex-end;padding:28px 0 18px}
+  .head h1{font-family:"Newsreader",serif;font-weight:500;font-size:40px;letter-spacing:-.01em}
+  .head .sub{font-family:"IBM Plex Mono";font-size:11px;color:var(--ink-soft);margin-top:6px}
+  .btn{font-family:"Inter";font-weight:600;font-size:13px;padding:11px 18px;border-radius:3px;cursor:pointer;border:1.5px solid var(--ink);background:var(--ink);color:var(--paper);transition:.12s}
+  .btn:hover{background:var(--oxblood);border-color:var(--oxblood)}
+
+  /* controls */
+  .controls{display:flex;gap:10px;align-items:center;margin-bottom:0;padding:14px 0}
+  .search{flex:1;background:var(--field);border:1.5px solid var(--rule);border-radius:3px;padding:10px 13px;font-family:"IBM Plex Mono";font-size:12px;color:var(--ink-soft)}
+  .filters{display:flex;gap:6px}
+  .chip{font-family:"IBM Plex Mono";font-size:11px;letter-spacing:.04em;text-transform:uppercase;padding:8px 13px;border:1.5px solid var(--rule);border-radius:3px;cursor:pointer;color:var(--ink-soft);background:var(--paper);transition:.12s}
+  .chip.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+  .chip:hover:not(.on){border-color:var(--ink-soft)}
+
+  /* table */
+  .tbl{border:1.5px solid var(--ink);background:var(--field)}
+  .tr{display:grid;grid-template-columns:120px 1fr 150px 150px 130px 30px;align-items:center;gap:0}
+  .th{background:var(--paper-edge);border-bottom:1.5px solid var(--ink)}
+  .th > div{font-family:"IBM Plex Mono";font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft);padding:13px 18px}
+  .row{border-bottom:1px solid var(--rule);cursor:pointer;transition:background .1s}
+  .row:last-child{border-bottom:0}
+  .row:hover{background:var(--paper-edge)}
+  .row > div{padding:16px 18px;font-family:"IBM Plex Mono";font-size:13px}
+  .row .ref{color:var(--oxblood);font-weight:500}
+  .row .pair{font-family:"Inter"}
+  .row .pair .a{font-weight:600}
+  .row .pair .x{color:var(--ink-soft);margin:0 6px}
+  .row .cp{color:var(--ink-soft)}
+  .row .role-c{font-family:"Inter";font-size:12px}
+  .row .arrow{color:var(--rule);text-align:right}
+  .st{display:inline-flex;align-items:center;gap:7px;font-family:"IBM Plex Mono";font-size:11px;letter-spacing:.03em;text-transform:uppercase}
+  .st .d{width:8px;height:8px;border-radius:50%;flex:none}
+  .st.settled .d{background:var(--seal-green)} .st.settled{color:var(--seal-green)}
+  .st.await .d{background:var(--amber)} .st.await{color:var(--amber)}
+  .st.disputed .d{background:var(--oxblood)} .st.disputed{color:var(--oxblood)}
+  .st.draft .d{background:var(--ink-soft)} .st.draft{color:var(--ink-soft)}
+
+  /* privacy footer note */
+  .privnote{display:flex;align-items:center;gap:12px;margin-top:18px;padding:14px 18px;border:1px dashed var(--rule);border-radius:3px;font-family:"IBM Plex Mono";font-size:11px;color:var(--ink-soft);line-height:1.6}
+  .privnote .lk{font-size:15px}
+  .privnote b{color:var(--ink)}
+
+  footer{font-family:"IBM Plex Mono";font-size:10.5px;color:var(--ink-soft);text-align:center;padding:26px 0 50px;letter-spacing:.03em}
+
+  @media (max-width:880px){
+    .sheet{padding:0 20px}.head h1{font-size:30px}
+    .tr{grid-template-columns:90px 1fr 110px}
+    .row .cp,.row .role-c,.row .arrow,.th .cp,.th .role-c,.th .arrow{display:none}
+    .controls{flex-wrap:wrap}
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="topbar">
+    <div class="brand">Trade<span class="ox">Guard</span></div>
+    <div class="acct">
+      <span class="org">Importer Co.</span>
+      <span>party ····2210</span>
+      <span class="av">IC</span>
+    </div>
+  </div>
+
+  <div class="head">
+    <div>
+      <h1>Trades</h1>
+      <div class="sub">3 trades · your party only</div>
+    </div>
+    <button class="btn">+ New Proposal</button>
+  </div>
+
+  <div class="controls">
+    <div class="search">Search by ref, asset, or counterparty…</div>
+    <div class="filters">
+      <span class="chip on">All</span>
+      <span class="chip">Settled</span>
+      <span class="chip">Awaiting</span>
+      <span class="chip">Disputed</span>
+    </div>
+  </div>
+
+  <div class="tbl">
+    <div class="tr th">
+      <div>Ref</div><div>Asset &harr; Cash</div><div class="cp">Counterparty</div>
+      <div>Status</div><div class="role-c">Your role</div><div class="arrow"></div>
+    </div>
+
+    <div class="tr row">
+      <div class="ref">#TG-0042</div>
+      <div class="pair"><span class="a">Bill of Lading 7741</span><span class="x">⇄</span>$100,000</div>
+      <div class="cp">Exporter Ltd.</div>
+      <div><span class="st settled"><span class="d"></span>Settled</span></div>
+      <div class="role-c">Buyer</div>
+      <div class="arrow">→</div>
+    </div>
+
+    <div class="tr row">
+      <div class="ref">#TG-0041</div>
+      <div class="pair"><span class="a">Invoice 8830</span><span class="x">⇄</span>$42,000</div>
+      <div class="cp">Acme Supply</div>
+      <div><span class="st await"><span class="d"></span>Awaiting accept</span></div>
+      <div class="role-c">Seller</div>
+      <div class="arrow">→</div>
+    </div>
+
+    <div class="tr row">
+      <div class="ref">#TG-0039</div>
+      <div class="pair"><span class="a">Warehouse Receipt 0192</span><span class="x">⇄</span>$250,000</div>
+      <div class="cp">Global Freight</div>
+      <div><span class="st disputed"><span class="d"></span>Disputed</span></div>
+      <div class="role-c">Buyer</div>
+      <div class="arrow">→</div>
+    </div>
+  </div>
+
+  <div class="privnote">
+    <span class="lk">🔒</span>
+    <span>This list is <b>your party's Active Contract Set</b> — read directly from Canton. You see only trades you're a stakeholder in. There is no global feed; other parties' trades are invisible to you by protocol.</span>
+  </div>
+
+  <footer>Each row is a contract your party can see via the JSON Ledger API / PQS. Status reflects on-ledger state: TradeProposal (awaiting), Trade (settled), or a disputed/expired proposal.</footer>
+</div>
+
+<script>
+// lightweight filter interaction
+const chips=[...document.querySelectorAll('.chip')];
+const rows=[...document.querySelectorAll('.row')];
+const map={settled:'settled',awaiting:'await',disputed:'disputed'};
+chips.forEach(c=>c.addEventListener('click',()=>{
+  chips.forEach(x=>x.classList.remove('on')); c.classList.add('on');
+  const f=c.textContent.trim().toLowerCase();
+  rows.forEach(r=>{
+    if(f==='all'){r.style.display='grid';return;}
+    const has=r.querySelector('.st.'+(map[f]||'__'));
+    r.style.display=has?'grid':'none';
+  });
+}));
+</script>
+</body>
+</html>

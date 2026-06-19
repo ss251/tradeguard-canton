@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeGuard — Agent Approval</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --paper:#f3efe6; --paper-edge:#e7e1d3; --ink:#1c1a17; --ink-soft:#6b6358;
+    --rule:#cdc4b0; --oxblood:#7c2128; --seal-green:#2f5d46; --field:#fbfaf6;
+  }
+  body{
+    background:var(--paper); color:var(--ink); font-family:"Inter",sans-serif;
+    line-height:1.5; -webkit-font-smoothing:antialiased;
+    background-image:repeating-linear-gradient(0deg, transparent, transparent 31px, rgba(28,26,23,.03) 31px, rgba(28,26,23,.03) 32px);
+    min-height:100vh;
+  }
+  .sheet{max-width:1180px;margin:0 auto;padding:0 40px}
+
+  .steps{display:flex;align-items:center;padding:28px 0 0;font-family:"IBM Plex Mono";font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+  .steps .s{color:var(--ink-soft);display:flex;align-items:center;gap:8px}
+  .steps .s .n{width:20px;height:20px;border:1.5px solid var(--rule);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px}
+  .steps .s.done .n{border-color:var(--seal-green);color:var(--seal-green)}
+  .steps .s.active{color:var(--ink)} .steps .s.active .n{border-color:var(--oxblood);color:var(--oxblood);font-weight:600}
+  .steps .sep{flex:1;height:1px;background:var(--rule);margin:0 14px;min-width:24px;max-width:60px}
+  .steps .sep.done{background:var(--seal-green)}
+
+  .mast{display:flex;justify-content:space-between;align-items:flex-end;padding:22px 0 16px;border-bottom:2px solid var(--ink)}
+  .mast .mark{font-weight:700;font-size:13px;letter-spacing:.28em;text-transform:uppercase;color:var(--oxblood)}
+  .mast h1{font-family:"Newsreader",serif;font-weight:500;font-size:42px;letter-spacing:-.01em;line-height:1;margin-top:6px}
+  .mast .by{text-align:right;font-family:"IBM Plex Mono";font-size:11px;color:var(--ink-soft);line-height:1.8}
+  .mast .by b{color:var(--ink)}
+
+  .thesis{font-family:"Newsreader",serif;font-size:21px;font-style:italic;padding:22px 0 26px;max-width:72ch;color:var(--ink-soft)}
+
+  /* the gate: agent (left) → authorization wall → ledger (right) */
+  .gate{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1.5px solid var(--ink)}
+
+  /* agent side */
+  .agent{padding:0;border-right:1.5px solid var(--ink)}
+  .pane-h{padding:16px 24px;border-bottom:1px solid var(--rule);display:flex;align-items:center;justify-content:space-between;background:var(--paper-edge)}
+  .pane-h .t{font-family:"IBM Plex Mono";font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft)}
+  .pane-h .who{display:flex;align-items:center;gap:9px;font-family:"IBM Plex Mono";font-size:12px;color:var(--ink)}
+  .pane-h .who .bot{width:22px;height:22px;border:1.5px solid var(--ink);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:12px}
+  .pane-h .badge{font-family:"IBM Plex Mono";font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft);border:1px solid var(--rule);padding:2px 7px;border-radius:10px}
+  .pane-body{padding:24px}
+
+  .obs{font-family:"IBM Plex Mono";font-size:12px;line-height:1.7;color:var(--ink-soft)}
+  .obs .line{display:flex;gap:11px;margin:11px 0}
+  .obs .line .tk{color:var(--seal-green);flex:none}
+  .obs .line b{color:var(--ink)}
+  .prep{margin-top:20px;border:1px solid var(--rule);background:var(--field)}
+  .prep .ph{font-family:"IBM Plex Mono";font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft);padding:11px 15px;border-bottom:1px solid var(--rule)}
+  .prep .cmd{padding:15px;font-family:"IBM Plex Mono";font-size:12px;line-height:1.7}
+  .prep .cmd .k{color:var(--oxblood)}
+  .prep .cmd .v{color:var(--ink)}
+  .held{margin-top:16px;display:flex;align-items:center;gap:10px;font-family:"IBM Plex Mono";font-size:11px;color:var(--oxblood);font-weight:600}
+  .held .pulse{width:8px;height:8px;border-radius:50%;background:var(--oxblood)}
+
+  /* the authorization gate — vertical divider with a lock */
+  .wall{position:relative}
+  .wall::before{content:"";position:absolute;left:-1px;top:0;bottom:0;width:0}
+  /* authorization (right) side — dark */
+  .auth{background:var(--ink);color:var(--paper);display:flex;flex-direction:column}
+  .auth .pane-h{background:rgba(243,239,230,.05);border-bottom:1px solid rgba(243,239,230,.16)}
+  .auth .pane-h .t{color:#9a9183}
+  .auth .pane-h .who{color:var(--paper)} .auth .pane-h .who .bot{border-color:rgba(243,239,230,.4)}
+  .auth .pane-body{flex:1;display:flex;flex-direction:column}
+  .gateline{display:flex;align-items:center;gap:14px;padding:16px;border:1px dashed rgba(243,239,230,.3);border-radius:4px;margin-bottom:20px}
+  .gateline .lk{width:38px;height:38px;border:1.5px solid #e8a3a8;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:17px;flex:none}
+  .gateline .gt{font-family:"IBM Plex Mono";font-size:11px;line-height:1.6;color:#d8d1c4}
+  .gateline .gt b{color:var(--paper)}
+  .big-q{font-family:"Newsreader",serif;font-size:25px;line-height:1.3;margin-bottom:10px}
+  .big-q .hl{color:#e8a3a8;font-style:italic}
+  .who-acts{font-family:"IBM Plex Mono";font-size:11px;color:#9a9183;line-height:1.6;margin-bottom:auto}
+  .who-acts b{color:var(--paper)}
+  .deny{margin-top:20px;padding-top:18px;border-top:1px solid rgba(243,239,230,.16);font-family:"IBM Plex Mono";font-size:10.5px;color:#9a9183;line-height:1.6}
+  .deny b{color:#e8a3a8}
+  .actions{display:flex;gap:12px;padding:18px 24px;border-top:1px solid rgba(243,239,230,.16)}
+  .btn{font-family:"Inter";font-weight:600;font-size:13px;padding:11px 18px;border-radius:3px;cursor:pointer;border:1.5px solid;transition:.12s}
+  .btn.rej{background:transparent;color:#d8d1c4;border-color:rgba(243,239,230,.3)}
+  .btn.rej:hover{color:var(--paper);border-color:var(--paper)}
+  .btn.app{flex:1;background:var(--paper);color:var(--ink);border-color:var(--paper)}
+  .btn.app:hover{background:#fff}
+
+  footer{font-family:"IBM Plex Mono";font-size:10.5px;color:var(--ink-soft);text-align:center;padding:26px 0 50px;letter-spacing:.03em}
+  .toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%) translateY(20px);opacity:0;background:var(--ink);color:var(--paper);padding:14px 22px;border-radius:4px;font-family:"IBM Plex Mono";font-size:12px;display:flex;gap:12px;transition:.3s;pointer-events:none;border-left:3px solid var(--seal-green)}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast .ok{color:#7fc59a;font-weight:600}
+
+  @media (max-width:880px){
+    .sheet{padding:0 20px}.gate{grid-template-columns:1fr}.agent{border-right:0;border-bottom:1.5px solid var(--ink)}
+    .mast h1{font-size:32px}
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="steps">
+    <div class="s done"><span class="n">✓</span>Draft</div><div class="sep done"></div>
+    <div class="s done"><span class="n">✓</span>Accept</div><div class="sep done"></div>
+    <div class="s active"><span class="n">3</span>Authorize</div><div class="sep"></div>
+    <div class="s"><span class="n">4</span>Settle</div>
+  </div>
+
+  <div class="mast">
+    <div><div class="mark">TradeGuard · Canton</div><h1>Agent Approval</h1></div>
+    <div class="by">ACTING AS<br><b>Importer Co.</b> · Authorizer<br>treasury desk</div>
+  </div>
+
+  <p class="thesis">The settlement agent watched, reasoned, and prepared the transaction — but it stops here. Nothing moves until a human signs. The agent proposes; it cannot dispose.</p>
+
+  <div class="gate">
+    <!-- AGENT SIDE -->
+    <section class="agent">
+      <div class="pane-h">
+        <div class="who"><span class="bot">🤖</span> Settlement Agent</div>
+        <span class="badge">off-chain · read + propose</span>
+      </div>
+      <div class="pane-body">
+        <div class="obs">
+          <div class="line"><span class="tk">✓</span><span>Monitored proposal <b>#TG-0042</b> for delivery conditions.</span></div>
+          <div class="line"><span class="tk">✓</span><span>Delivery attestation received — <b>Bill of Lading endorsed</b> by Port Registry, 14:01 UTC.</span></div>
+          <div class="line"><span class="tk">✓</span><span>Verified buyer funding: Bank A deposit covers <b>$100,000</b>.</span></div>
+          <div class="line"><span class="tk">✓</span><span>Conditions met. Prepared the settlement command.</span></div>
+        </div>
+
+        <div class="prep">
+          <div class="ph">Prepared command — preview only, not submitted</div>
+          <div class="cmd">
+            <span class="k">exercise</span> <span class="v">proposal #TG-0042</span><br>
+            &nbsp;&nbsp;<span class="k">Accept</span> <span class="v">with</span><br>
+            &nbsp;&nbsp;&nbsp;&nbsp;<span class="v">cashCid = deposit ····2210</span><br>
+            &nbsp;&nbsp;&nbsp;&nbsp;<span class="v">amount = $100,000 USD</span>
+          </div>
+        </div>
+
+        <div class="held"><span class="pulse"></span>Holding for authorization — agent will not submit</div>
+      </div>
+    </section>
+
+    <!-- AUTHORIZATION SIDE -->
+    <aside class="auth">
+      <div class="pane-h">
+        <div class="who"><span class="bot">✋</span> Human authorization</div>
+        <span class="badge" style="border-color:rgba(243,239,230,.3);color:#9a9183">required to proceed</span>
+      </div>
+      <div class="pane-body">
+        <div class="gateline">
+          <span class="lk">🔒</span>
+          <span class="gt">The agent has <b>no signing authority</b>. This transaction reaches the ledger only with your signature.</span>
+        </div>
+        <div class="big-q">Authorize the agent's prepared settlement of <span class="hl">$100,000</span> for <span class="hl">Bill of Lading 7741</span>?</div>
+        <div class="who-acts">Signed as <b>Importer Co. treasury</b>. You are the Daml signatory — authorization happens with your party's key, never the agent's.</div>
+        <div class="deny">Reject sends it back to the agent with a note. <b>Nothing settles without an explicit human approve.</b> Every decision is logged to the trade's audit trail.</div>
+      </div>
+      <div class="actions">
+        <button class="btn rej">Reject</button>
+        <button class="btn app" id="approve">Approve &amp; Submit →</button>
+      </div>
+    </aside>
+  </div>
+
+  <footer>The agent is an off-chain process with read + propose access only. Settlement authorization is bound to the human signatory's Canton party — the agent literally cannot exercise the choice itself.</footer>
+</div>
+
+<div class="toast" id="toast"><span class="ok">✓ Authorized</span><span>You signed. Settlement submitted to Canton — proceeding to atomic DvP.</span></div>
+
+<script>
+const approve = document.getElementById("approve");
+const toast = document.getElementById("toast");
+approve.addEventListener("click", ()=>{
+  approve.textContent = "Submitting…";
+  setTimeout(()=>{
+    approve.textContent = "Authorized ✓";
+    approve.style.background = "#7fc59a"; approve.style.borderColor="#7fc59a";
+    toast.classList.add("show");
+    setTimeout(()=>toast.classList.remove("show"), 4000);
+  }, 700);
+});
+</script>
+</body>
+</html>

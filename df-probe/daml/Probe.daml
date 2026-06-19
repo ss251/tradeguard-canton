@@ -1,0 +1,4 @@
+module Probe where
+import Daml.Finance.Interface.Types.Common.V3.Types (InstrumentKey(..), Id(..))
+test : Party -> InstrumentKey
+test p = InstrumentKey with depository = p; issuer = p; id = Id "USD"; version = "1"
