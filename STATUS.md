@@ -59,3 +59,15 @@ open http://localhost:8080
 - Optional: record a screen-capture of the demo for the submission
 - Optional: wire netting end-to-end on-ledger (algorithm + engine both exist; demo
   currently shows the optimization, residuals reuse the proven SettlementBatch)
+
+## UPDATE 2026-06-19 ~19:30 — DEPLOYED TO REAL CANTON NETWORK ✅
+- tradeguard-v3/ = keyless Daml 3.x port (DPM/SDK 3.4.11, LF 2.1). ALL 11 tests pass.
+- Deployed to a REAL 3-validator Canton network (Canton Builder Tool LocalNet):
+  - DAR uploaded to App Provider (3975) + App User (2975) — HTTP 200, package loaded=True
+  - Network queryable with HS256 token (secret "unsafe"); 6 system parties present
+- Refactor: dropped contract keys from 5 templates (Canton 3.4 LocalNet only allows LF 2.1/2.2
+  which forbid keys); SettlementAuthority passed by ContractId (authorityCid on AllocatedLeg);
+  PartyDetails.displayName removed in 3.x -> match parties by id-prefix via DA.Text.splitOn.
+- REMAINING to run full agent loop on the REAL network: seed scenario via auth-enabled Daml
+  Script (needs JWT to the gRPC ledger 3901) + point agent/ui at ports 3975/2975. The 2.x
+  sandbox stack (scripts/run_stack.sh) remains the fully-working demo path.
