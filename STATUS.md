@@ -71,3 +71,16 @@ open http://localhost:8080
 - REMAINING to run full agent loop on the REAL network: seed scenario via auth-enabled Daml
   Script (needs JWT to the gRPC ledger 3901) + point agent/ui at ports 3975/2975. The 2.x
   sandbox stack (scripts/run_stack.sh) remains the fully-working demo path.
+
+## UPDATE 2026-06-19 ~19:25 — AGENT LOOP RUNS ON REAL NETWORK ✅
+- agent/real_client.py: JSON API v2 client (HS256 admin token, WildcardFilter ACS,
+  /v2/commands/submit-and-wait). Enable with TG_REAL=1.
+- scripts/seed_real.py: allocate 7 parties + grant CanActAs via admin API.
+- Seeded real net via auth'd Daml Script (dpm script --ledger-port 3901 --access-token-file).
+- VERIFIED on live 3-validator LocalNet (:3975):
+  * status reads coordinator view; watch reasons + writes SettlementRecommendation on-ledger;
+    approve creates ApprovedAction on-ledger.
+  * PRIVACY: buyer/seller see legs; regulator sees accepted trades but 0 holdings;
+    OUTSIDER sees nothing (0/0/0).
+- RUN real net: TG_REAL=1 python3 -m agent.cli status|watch --once|approve TG-LIVE-001
+- Remaining: settle orchestration on real net (auth'd Daml Script, same pattern as seed).
