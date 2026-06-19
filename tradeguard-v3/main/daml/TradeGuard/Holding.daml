@@ -26,16 +26,14 @@ template Account
   where
     signatory custodian, owner
     observer observers
-    key AccountKey with custodian; owner; id : AccountKey
-    maintainer key.custodian
 
-    -- | Retrieve the account's key (stakeholder-gated).
+    -- | Build this account's key value (a plain data value, not a contract key).
     nonconsuming choice GetAccountKey : AccountKey
       with actor : Party
       controller actor
       do
         assertMsg "actor must be a stakeholder" (actor == custodian || actor == owner)
-        pure (key this)
+        pure (AccountKey with custodian; owner; id)
 
 -- | A lock placed on a holding while it is committed to an in-flight settlement.
 --   A locked holding cannot be transferred until unlocked, which is what makes

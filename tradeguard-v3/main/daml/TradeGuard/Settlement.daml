@@ -40,11 +40,14 @@ data Leg = Leg
   deriving (Eq, Show)
 
 -- | An allocated instruction: a leg paired with the specific locked holding that
---   will fulfil it. Produced during the allocation phase.
+--   will fulfil it, plus the custodian's settlement-authority contract. Produced
+--   during the allocation phase. (Canton 3.x: we pass the authority by ContractId
+--   rather than looking it up by key, since contract keys are not used.)
 data AllocatedLeg = AllocatedLeg
   with
     leg : Leg
     holdingCid : ContractId Holding
+    authorityCid : ContractId SettlementAuthority
   deriving (Eq, Show)
 
 -- | The status of a settlement batch.
@@ -73,8 +76,6 @@ template SettlementAuthority
   where
     signatory custodian
     observer coordinator
-    key (custodian, coordinator) : (Party, Party)
-    maintainer key._1
 
     -- | Execute a locked holding's settlement transfer using the custodian's
     --   delegated authority. The coordinator drives it; the new owner's authority
@@ -111,8 +112,6 @@ template SettlementBatch
     signatory coordinator
     observer requiredParties, observers, regObs regulator
     ensure not (null legs)
-    key (coordinator, batchId) : (Party, Id)
-    maintainer key._1
 
     -- | Allocate the batch: lock every leg's source holding so it cannot move until
     --   settlement. Returns the batch in `Allocated` status. The caller passes the
@@ -147,7 +146,7 @@ template SettlementBatch
         assertMsg "batch must be Allocated" (status == Allocated)
         assertMsg "must settle every leg" (length allocations == length legs)
         newHoldings <- forA allocations $ \al ->
-          exerciseByKey @SettlementAuthority (al.leg.custodian, coordinator)
+          exercise al.authorityCid
             ExecuteSettleTransfer with
               holdingCid = al.holdingCid
               newOwner = al.leg.receiver

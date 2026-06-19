@@ -32,8 +32,6 @@ template Instrument
   where
     signatory depository, issuer
     observer observers
-    key (toInstrumentKey this) : InstrumentKey
-    maintainer key.depository
 
     -- | Issue a holding of this instrument into an owner's account. Requires the
     --   account to exist (custodian + owner co-authorize via the Holding signatory).
