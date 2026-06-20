@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeGuard — Deck</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#f4f1ea; --paper2:#ece7dc; --ink:#1c1a17; --ink2:#4a463f;
+    --line:#cfc7b6; --ox:#7c2d2d; --ox2:#9c4a3c; --green:#3f6b4f; --amber:#9a7016;
+    --mono:'IBM Plex Mono',ui-monospace,monospace; --serif:'Newsreader',Georgia,serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:#0c0b0a;color:var(--ink);font-family:var(--serif);
+    display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .stage{width:100vw;height:100vh;position:relative}
+  .slide{position:absolute;inset:0;display:none;flex-direction:column;
+    padding:6vh 7vw;background:var(--paper);
+    background-image:radial-gradient(circle at 1px 1px, rgba(0,0,0,.04) 1px, transparent 0);
+    background-size:22px 22px}
+  .slide.on{display:flex}
+  .slide:not(.center){padding-top:11vh}
+  .kicker{font-family:var(--mono);font-size:.78rem;letter-spacing:.22em;
+    text-transform:uppercase;color:var(--ox);font-weight:600}
+  .num{position:absolute;top:5vh;right:7vw;font-family:var(--mono);
+    font-size:.78rem;color:var(--ink2);letter-spacing:.1em}
+  .brand{position:absolute;top:5vh;left:7vw;font-family:var(--mono);
+    font-size:.78rem;letter-spacing:.14em;color:var(--ink2)}
+  .brand b{color:var(--ox);font-weight:600}
+  h1{font-size:clamp(2.4rem,5.6vw,5rem);line-height:1.02;font-weight:500;
+    letter-spacing:-.015em;margin:.15em 0 .35em}
+  h2{font-size:clamp(1.8rem,3.6vw,3rem);line-height:1.06;font-weight:500;
+    letter-spacing:-.01em;margin:.1em 0 .5em}
+  .lead{font-size:clamp(1.1rem,1.8vw,1.6rem);color:var(--ink2);max-width:46ch;
+    line-height:1.4}
+  .em{color:var(--ox);font-style:italic}
+  .mono{font-family:var(--mono)}
+  .center{align-items:center;justify-content:center;text-align:center}
+  .center .lead{max-width:54ch}
+  .big-quote{font-size:clamp(1.6rem,3.4vw,3rem);line-height:1.18;font-weight:400;
+    max-width:24ch;letter-spacing:-.01em}
+  .big-quote b{color:var(--ox);font-weight:600}
+  ul.steps{list-style:none;margin-top:1.2em;display:flex;flex-direction:column;gap:.7em}
+  ul.steps li{display:flex;gap:1em;align-items:baseline;font-size:clamp(1rem,1.6vw,1.45rem);
+    line-height:1.3}
+  ul.steps li .n{font-family:var(--mono);font-size:.85em;color:var(--paper);
+    background:var(--ink);min-width:1.7em;height:1.7em;border-radius:50%;
+    display:inline-flex;align-items:center;justify-content:center;font-weight:600;flex:0 0 auto}
+  ul.steps li.stop .n{background:var(--ox)}
+  ul.steps li.go .n{background:var(--green)}
+  .sub{color:var(--ink2);font-size:.86em}
+  /* number callout */
+  .stat{display:flex;gap:0;align-items:stretch;margin-top:1.4em;border:1px solid var(--line);
+    background:var(--paper2)}
+  .stat .cell{padding:1.1em 1.5em;border-right:1px solid var(--line);flex:1}
+  .stat .cell:last-child{border-right:0}
+  .stat .v{font-family:var(--mono);font-size:clamp(1.6rem,3.2vw,2.8rem);font-weight:600;
+    color:var(--ink);line-height:1}
+  .stat .v.ox{color:var(--ox)} .stat .v.green{color:var(--green)}
+  .stat .k{font-family:var(--mono);font-size:.72rem;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--ink2);margin-top:.6em}
+  /* privacy table */
+  table.priv{border-collapse:collapse;margin-top:1.2em;font-family:var(--mono);width:100%;max-width:760px}
+  table.priv td,table.priv th{border:1px solid var(--line);padding:.55em .9em;text-align:left;font-size:clamp(.8rem,1.3vw,1.05rem)}
+  table.priv th{background:var(--ink);color:var(--paper);font-weight:600;letter-spacing:.04em;font-size:.78rem;text-transform:uppercase}
+  table.priv td.see{color:var(--ink2)} table.priv td.all{color:var(--ox);font-weight:600}
+  table.priv td.none{color:var(--ink);font-weight:600}
+  table.priv tr.op td{background:#efe9dc}
+  table.priv tr.out td{background:#1c1a17;color:#cfc7b6}
+  table.priv tr.out td.none{color:#e0c0b0}
+  /* graph */
+  .flowwrap{display:flex;gap:3vw;align-items:center;margin-top:1.5em;flex-wrap:wrap}
+  .gross,.netd{border:1px solid var(--line);padding:1.1em 1.4em;background:var(--paper2);font-family:var(--mono);font-size:.92rem}
+  .gross .h,.netd .h{font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-bottom:.7em}
+  .arrow{font-size:2.4rem;color:var(--ox)}
+  .ob{color:var(--ink2)} .res{color:var(--ox);font-weight:600}
+  .guard{display:flex;gap:.8em;margin-top:1.1em;flex-wrap:wrap}
+  .guard .g{border:1px solid var(--line);border-left:3px solid var(--green);
+    padding:.6em .9em;background:var(--paper2);font-size:.95rem;max-width:30ch}
+  .guard .g b{font-family:var(--mono);font-size:.8rem;letter-spacing:.06em;color:var(--green);display:block;text-transform:uppercase;margin-bottom:.2em}
+  .reject{margin-top:1.4em;font-family:var(--mono);width:fit-content;max-width:max-content;
+    border:2px solid var(--ox);background:rgba(124,45,45,.06);
+    color:var(--ox);padding:.5em 1em;font-weight:600;letter-spacing:.1em;
+    transform:rotate(-1.5deg);transform-origin:left center}
+  .foot{margin-top:auto;font-family:var(--mono);font-size:.74rem;color:var(--ink2);
+    letter-spacing:.06em;padding-top:2em;border-top:1px solid var(--line)}
+  .chips{display:flex;gap:.6em;flex-wrap:wrap;margin-top:1.3em}
+  .chip{font-family:var(--mono);font-size:.8rem;border:1px solid var(--line);
+    padding:.4em .8em;background:var(--paper2);color:var(--ink2)}
+  .chip b{color:var(--green)}
+  .progress{position:absolute;bottom:0;left:0;height:4px;background:var(--ox);transition:width .3s}
+  .hint{position:absolute;bottom:1.2vh;right:7vw;font-family:var(--mono);font-size:.66rem;color:var(--ink2);opacity:.6}
+  .dvp{display:flex;gap:1.5em;margin-top:1.3em;align-items:center;font-family:var(--mono);font-size:1rem}
+  .leg{border:1px solid var(--line);padding:.7em 1.1em;background:var(--paper2)}
+  .swap{font-size:1.8rem;color:var(--ox)}
+  .why{border-left:3px solid var(--ox);padding-left:1.2em;margin-top:1.3em;max-width:50ch;
+    font-size:clamp(1rem,1.5vw,1.3rem);line-height:1.4;color:var(--ink2)}
+  .why b{color:var(--ink);font-style:italic}
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+
+  <!-- 1 TITLE -->
+  <section class="slide on center">
+    <div class="kicker">Build on Canton · TradeFi / RWA</div>
+    <h1>Trade<span style="color:var(--ox)">Guard</span></h1>
+    <p class="lead">Private multilateral <span class="em">netting</span> + atomic settlement for trade finance — on Canton.</p>
+    <div class="big-quote" style="margin-top:1.4em;font-size:clamp(1.1rem,2vw,1.6rem)">
+      Firms that owe each other can net it down and settle the residual —<br>
+      <b>without ever showing each other their books.</b></div>
+  </section>
+
+  <!-- 2 PROBLEM -->
+  <section class="slide">
+    <div class="kicker">The problem</div>
+    <h2>Multi-party trade finance is a web of obligations.</h2>
+    <p class="lead">Today you either…</p>
+    <ul class="steps">
+      <li><span class="n">A</span><div>Settle <b>gross</b> — every obligation moves money. <span class="sub">Huge liquidity drag.</span></div></li>
+      <li><span class="n">B</span><div>Net through a <b>trusted central party</b> that sees everyone's positions. <span class="sub">A privacy &amp; trust problem.</span></div></li>
+    </ul>
+    <div class="why">And cross-leg settlement carries <b>Herstatt risk</b>: you pay, and you don't receive.</div>
+  </section>
+
+  <!-- 3 INSIGHT -->
+  <section class="slide">
+    <div class="kicker">The insight · why only on Canton</div>
+    <div class="big-quote" style="margin-top:.3em">You can only net positions you're allowed to see. Canton lets an authorized operator net positions <b>the counterparties can't see each other's.</b></div>
+    <table class="priv">
+      <tr><th>Reader</th><th>Sees of the 5-obligation book</th></tr>
+      <tr><td>Firm A</td><td class="see">3 — only its own (A→B, A→C, C→A)</td></tr>
+      <tr><td>Firm B</td><td class="see">3 — only its own</td></tr>
+      <tr><td>Firm C</td><td class="see">4 — only its own</td></tr>
+      <tr class="op"><td>Operator <span class="sub">(agent)</span></td><td class="all">5 — the whole book</td></tr>
+      <tr class="out"><td>Outsider</td><td class="none">0 — nothing</td></tr>
+    </table>
+    <div class="foot">Sub-transaction privacy doing real algorithmic work — proven live over the JSON Ledger API.</div>
+  </section>
+
+  <!-- 4 WHAT THE AGENT DOES -->
+  <section class="slide">
+    <div class="kicker">What the agent does</div>
+    <h2>Propose, don't dispose.</h2>
+    <ul class="steps">
+      <li class="go"><span class="n">1</span><div><b>Monitors</b> the confidential book it's disclosed to.</div></li>
+      <li class="go"><span class="n">2</span><div><b>Computes</b> the multilateral net → minimal residual transfers.</div></li>
+      <li class="go"><span class="n">3</span><div><b>Proposes</b> a netting batch with an auditable rationale.</div></li>
+      <li class="stop"><span class="n">4</span><div><b>Stops</b> — a human approves on-ledger. <span class="sub">The agent never moves assets on its own.</span></div></li>
+      <li class="go"><span class="n">5</span><div><b>Settles atomically</b> — discharge every obligation <i>and</i> move only residual cash, in ONE transaction.</div></li>
+    </ul>
+    <div class="stat">
+      <div class="cell"><div class="v">360</div><div class="k">gross · 5 obligations</div></div>
+      <div class="cell"><div class="v ox">70</div><div class="k">net · 2 transfers</div></div>
+      <div class="cell"><div class="v green">80.6%</div><div class="k">value that never moves</div></div>
+    </div>
+  </section>
+
+  <!-- 5 ADVERSARIAL -->
+  <section class="slide">
+    <div class="kicker">The credibility beat</div>
+    <h2>The ledger checks the agent — not the reverse.</h2>
+    <p class="lead">A reasoning agent proposing settlements sounds risky. So the netting contract enforces, on-ledger:</p>
+    <div class="guard">
+      <div class="g"><b>Conservation</b>residual net per party = the netted obligations. No value invented or lost.</div>
+      <div class="g"><b>Efficiency</b>residual gross ≤ obligation gross. The net can't exceed what it nets.</div>
+      <div class="g"><b>Funding</b>an underfunded leg rolls the whole transaction back.</div>
+    </div>
+    <div class="reject">⃠ FRAUDULENT PROPOSAL — REJECTED BY THE LEDGER</div>
+    <div class="foot">The agent's rationale is never trusted. The contract is. An under-settlement test asserts <span class="mono">submitMustFail</span>.</div>
+  </section>
+
+  <!-- 6 REAL -->
+  <section class="slide">
+    <div class="kicker">It's real — not a sandbox</div>
+    <h2>Deployed and running on a real Canton network.</h2>
+    <div class="dvp">
+      <div class="leg">tokenized asset</div><div class="swap">⇄</div><div class="leg">cash</div>
+      <div style="margin-left:1em" class="sub">atomic DvP — the substrate under netting</div>
+    </div>
+    <div class="chips">
+      <span class="chip"><b>14</b>&nbsp;Daml tests green</span>
+      <span class="chip"><b>3-validator</b>&nbsp;Canton LocalNet (not single-node)</span>
+      <span class="chip">JSON Ledger API <b>v2</b></span>
+      <span class="chip">daml-finance v4 patterns</span>
+      <span class="chip">live <b>role-switching UI</b></span>
+    </div>
+    <div class="why" style="margin-top:1.6em">Full flow verified live: <b>net → propose → human approve → atomic settle</b>. Click any party in the UI and see exactly what that party can see.</div>
+  </section>
+
+  <!-- 7 CLOSE -->
+  <section class="slide center">
+    <div class="kicker">Why it wins</div>
+    <h2 style="max-width:20ch">Atomic kills settlement risk.<br>Private netting kills the liquidity drag.</h2>
+    <p class="lead">…without a trusted central party — the thing a transparent chain can't do. Governed by an agent, made safe by on-ledger guards.</p>
+    <div class="big-quote" style="margin-top:1.3em;font-size:clamp(1.2rem,2.2vw,1.8rem)">TradeGuard is the settlement-and-netting layer institutions actually need — <b>private, atomic, agent-operated, provably safe.</b></div>
+    <div class="foot" style="border:0;margin-top:2em">github.com/ss251/tradeguard-canton</div>
+  </section>
+
+  <div class="progress" id="prog"></div>
+  <div class="brand">Trade<b>Guard</b> · Canton</div>
+  <div class="num" id="pageno">01 / 07</div>
+  <div class="hint">← → or space to navigate</div>
+</div>
+
+<script>
+  const slides=[...document.querySelectorAll('.slide')];
+  let i=0;
+  function show(n){
+    i=Math.max(0,Math.min(slides.length-1,n));
+    slides.forEach((s,k)=>s.classList.toggle('on',k===i));
+    document.getElementById('pageno').textContent=
+      String(i+1).padStart(2,'0')+' / '+String(slides.length).padStart(2,'0');
+    document.getElementById('prog').style.width=((i+1)/slides.length*100)+'%';
+  }
+  document.addEventListener('keydown',e=>{
+    if(e.key==='ArrowRight'||e.key===' '||e.key==='PageDown'){show(i+1);e.preventDefault();}
+    if(e.key==='ArrowLeft'||e.key==='PageUp'){show(i-1);e.preventDefault();}
+    if(e.key==='Home')show(0); if(e.key==='End')show(slides.length-1);
+  });
+  document.getElementById('stage').addEventListener('click',e=>{
+    if(e.clientX > window.innerWidth*0.5) show(i+1); else show(i-1);
+  });
+  show(0);
+</script>
+</body>
+</html>
