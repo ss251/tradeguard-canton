@@ -34,10 +34,30 @@ _Scope note: TradeGuard automates the **settlement and netting layer** of trade 
 | `scripts/` | `run_stack.sh` (bring up the full stack), `demo.sh` (run the whole story), `linear_post.py`. |
 | `ARCHITECTURE.md` | Deep architecture + design rationale (authorization model, atomicity, privacy). |
 | `wireframes/` | Hi-fi UI design set (the design system the live UI implements). |
+| `ui/console.html` + `ui/console_server.py` | **Operator Console** — the interactive app you drive the netting workflow from. |
+| `deck/index.html` | The pitch deck (7 slides, netting-first). |
 
 ---
 
-## Quickstart
+## The Operator Console (start here)
+
+The headline experience is an **app you operate**, not a script you run. With the real
+network up (`canton builder start` + `scripts/seed_real.py`):
+
+```bash
+python3 ui/console_server.py     # -> http://localhost:8090
+```
+
+Then drive the whole workflow from the browser, against the live ledger:
+**Seed book** → **Compute net** (the agent's plan: 360 → 70, 80.6% netted) →
+**Approve & settle** (human-approval gate → atomic on-ledger settlement) →
+**Test: reject fraud** (the ledger rejects a value-violating proposal). The privacy
+panel shows, live and per-party, that each firm sees only its own obligations while only
+the operator sees the whole book.
+
+---
+
+## Quickstart (sandbox path)
 
 ```bash
 # one-time: JDK 17 + Daml SDK 2.10.4 on PATH (see ARCHITECTURE.md)
