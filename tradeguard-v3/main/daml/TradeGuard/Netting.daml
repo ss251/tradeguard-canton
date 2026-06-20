@@ -1,0 +1,161 @@
+-- Copyright (c) 2026 TradeGuard. SPDX-License-Identifier: Apache-2.0
+--
+-- | Private multilateral netting — the settlement-optimization core.
+--
+-- This is what makes TradeGuard more than an atomic-DvP demo. In a multi-party
+-- book, firms owe each other across many bilateral obligations. Each `Obligation`
+-- is visible ONLY to its two counterparties and the netting `operator` it is
+-- disclosed to — NOT to the other firms in the book. No firm can see the whole
+-- book; only the operator (the agent's principal) can.
+--
+-- The off-chain agent, acting as operator, reads the obligations it is disclosed
+-- to, computes the multilateral net (minimal residual transfers), and proposes a
+-- `NettingBatch`. On settle, the batch atomically (a) discharges every netted
+-- obligation and (b) settles only the residual cash transfers — all in ONE
+-- transaction. If any leg fails, nothing happens: no obligation is discharged and
+-- no cash moves.
+--
+-- Why this needs Canton: netting requires seeing many parties' positions. On a
+-- transparent ledger that means exposing every position publicly. Here the
+-- operator is an authorized party the obligations are disclosed to; the firms
+-- never see each other's books. The optimization is only *safe* because privacy
+-- is the substrate.
+module TradeGuard.Netting where
+
+import qualified DA.Set as Set
+import DA.Foldable (forA_)
+import TradeGuard.Types
+import TradeGuard.Holding
+import TradeGuard.Settlement
+
+-- | A bilateral obligation: `payer` owes `payee` `amount` of `instrument`.
+--   Disclosed to the netting `operator` so it can compute the multilateral net,
+--   but NOT to any other firm. Both counterparties sign; the operator observes.
+template Obligation
+  with
+    payer : Party
+    payee : Party
+    operator : Party
+      -- ^ The netting operator (agent principal) the obligation is disclosed to.
+    instrument : InstrumentKey
+    amount : Decimal
+    reference : Text
+      -- ^ Human-readable reference (invoice id, trade ref, etc.).
+  where
+    signatory payer, payee
+    observer operator
+    ensure amount > 0.0
+
+    -- | Discharge the obligation. Controlled by the operator alone: both
+    --   counterparties consented to this when they signed, delegating netting
+    --   authority to the operator. Used inside NettingBatch settlement.
+    choice Discharge : ()
+      controller operator
+      do return ()
+
+-- | A residual transfer the agent proposes after netting: move `amount` from
+--   `sender` to `receiver`. (A thin alias over a settlement Leg for clarity.)
+data NetTransfer = NetTransfer
+  with
+    sender : Party
+    receiver : Party
+    amount : Decimal
+  deriving (Eq, Show)
+
+-- | Result of a netting settlement.
+data NettingResult = NettingResult
+  with
+    obligationsDischarged : Int
+    residualsSettled : Int
+    grossValue : Decimal
+    netValue : Decimal
+  deriving (Eq, Show)
+
+-- | A proposed multilateral netting: the operator references the obligations to
+--   discharge and the residual legs to settle. On settle, BOTH happen atomically.
+--
+--   Adversarial guards (checked at settle):
+--     * conservation — residual net per party must equal that party's net across
+--       the discharged obligations (no value invented or lost),
+--     * efficiency — residual gross value must not exceed obligation gross value
+--       (the net can never be larger than what it nets),
+--     * funding — every residual sender's holding must cover its leg (enforced by
+--       the underlying lock-then-swap; underfunded => the whole tx rolls back).
+template NettingBatch
+  with
+    operator : Party
+      -- ^ The netting operator orchestrating settlement (the agent's principal).
+    obligations : [ContractId Obligation]
+      -- ^ The obligations being netted and discharged.
+    obligationFacts : [NetTransfer]
+      -- ^ The (payer->payee, amount) facts of those obligations, for on-ledger
+      --   conservation checking. Must correspond 1:1 with `obligations`.
+    residualLegs : [Leg]
+      -- ^ The minimal residual transfers that settle the net.
+    cashInstrument : InstrumentKey
+    parties : Parties
+      -- ^ All firms in the book (controllers of settlement).
+    regulator : Optional Party
+    status : BatchStatus
+  where
+    signatory operator
+    observer parties, regObs regulator
+    ensure not (null obligations)
+
+    -- | Settle the netting atomically: discharge every obligation AND settle every
+    --   residual leg in ONE transaction. All-or-nothing. The agent only reaches
+    --   here after a human ApprovedAction (see TradeGuard.Agent).
+    choice SettleNetting : NettingResult
+      with
+        allocations : [AllocatedLeg]
+      controller operator :: Set.toList parties
+      do
+        -- adversarial guard 1: conservation — each party's net across the
+        -- obligations must equal its net across the residual legs.
+        let netOf transfers party =
+              sum [t.amount | t <- transfers, t.receiver == party]
+              - sum [t.amount | t <- transfers, t.sender == party]
+            legAsTransfer l = NetTransfer with
+              sender = l.sender; receiver = l.receiver; amount = l.amount
+            residualTransfers = map legAsTransfer residualLegs
+            allParties = Set.toList parties
+        forA_ allParties $ \p ->
+          assertMsg
+            ("netting must conserve value for " <> show p)
+            (netOf obligationFacts p == netOf residualTransfers p)
+
+        -- adversarial guard 2: efficiency — residual gross <= obligation gross.
+        let grossObl = sum [t.amount | t <- obligationFacts]
+            grossRes = sum [t.amount | t <- residualTransfers]
+        assertMsg "residual gross cannot exceed obligation gross"
+          (grossRes <= grossObl)
+        assertMsg "must settle every residual leg"
+          (length allocations == length residualLegs)
+
+        -- discharge every netted obligation (operator authority; delegated)
+        forA_ obligations (`exercise` Discharge)
+
+        -- settle residuals atomically via the proven lock-then-swap path.
+        -- adversarial guard 3 (funding) is enforced here: a locked holding that
+        -- does not cover its leg makes SettleTransfer fail -> whole tx rolls back.
+        forA_ allocations $ \al ->
+          exercise al.authorityCid ExecuteSettleTransfer with
+            holdingCid = al.holdingCid
+            newOwner = al.leg.receiver
+            newAccountId = al.leg.receiverAccountId
+
+        pure NettingResult with
+          obligationsDischarged = length obligations
+          residualsSettled = length residualLegs
+          grossValue = grossObl
+          netValue = grossRes
+
+    -- | Cancel the proposed netting (operator or any firm). Nothing is discharged
+    --   or settled.
+    choice CancelNetting : ()
+      with actor : Party
+      controller actor
+      do
+        assertMsg "actor must be operator or a party"
+          (actor == operator || actor `Set.member` parties)
+        return ()
