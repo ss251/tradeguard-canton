@@ -20,7 +20,9 @@ import base64, hashlib, hmac, json, os, sys, urllib.request, urllib.error
 APP_PROVIDER = "http://localhost:3975"
 SECRET = "unsafe"
 PKG = "#tradeguard"  # package-name reference, survives rebuilds
-PARTIES = ["Seller", "Buyer", "Regulator", "Registry", "Bank", "Coordinator", "Outsider"]
+PARTIES = ["Seller", "Buyer", "Regulator", "Registry", "Bank", "Coordinator", "Outsider",
+           # netting scenario parties
+           "FirmA", "FirmB", "FirmC", "Operator", "NetBank", "NetReg", "NetOut"]
 PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(PROJECT, "tradeguard-v3", "real-init-result.json")
 
