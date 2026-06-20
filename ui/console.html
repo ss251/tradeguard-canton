@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeGuard — Operator Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#f4f1ea; --paper2:#ece7dc; --card:#faf8f3; --ink:#1c1a17; --ink2:#5a554c;
+    --line:#cfc7b6; --ox:#7c2d2d; --ox2:#9c4a3c; --green:#3f6b4f; --amber:#9a7016;
+    --mono:'IBM Plex Mono',ui-monospace,monospace; --serif:'Newsreader',Georgia,serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--paper);color:var(--ink);font-family:var(--serif);
+    background-image:radial-gradient(circle at 1px 1px, rgba(0,0,0,.035) 1px, transparent 0);
+    background-size:24px 24px;min-height:100vh}
+  .wrap{max-width:1240px;margin:0 auto;padding:28px 34px 60px}
+  header{display:flex;justify-content:space-between;align-items:flex-end;
+    border-bottom:2px solid var(--ink);padding-bottom:14px;margin-bottom:8px}
+  .title{font-size:2rem;font-weight:500;letter-spacing:-.01em}
+  .title b{color:var(--ox)}
+  .sub{font-family:var(--mono);font-size:.72rem;letter-spacing:.1em;color:var(--ink2);
+    text-transform:uppercase;margin-top:4px}
+  .net{font-family:var(--mono);font-size:.7rem;color:var(--ink2);text-align:right}
+  .net .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:5px}
+  .net .dot.down{background:var(--ox)}
+
+  /* pipeline stepper */
+  .pipe{display:flex;gap:0;margin:22px 0 8px;font-family:var(--mono);font-size:.74rem}
+  .pipe .st{flex:1;padding:.7em .9em;border:1px solid var(--line);border-right:0;
+    background:var(--paper2);color:var(--ink2);position:relative;letter-spacing:.04em}
+  .pipe .st:last-child{border-right:1px solid var(--line)}
+  .pipe .st.active{background:var(--ink);color:var(--paper)}
+  .pipe .st.done{background:#e7ecdf;color:var(--green);border-color:#bcd0bc}
+  .pipe .st .n{font-weight:600;margin-right:.5em}
+
+  .grid{display:grid;grid-template-columns:1.35fr 1fr;gap:22px;margin-top:18px}
+  .card{background:var(--card);border:1px solid var(--line);padding:18px 20px}
+  .card h3{font-family:var(--mono);font-size:.74rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--ox);font-weight:600;margin-bottom:14px;display:flex;justify-content:space-between}
+  .card h3 .tag{color:var(--ink2);font-weight:400}
+
+  /* obligation book */
+  table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:.86rem}
+  th{text-align:left;font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--ink2);font-weight:600;padding:.4em .5em;border-bottom:1px solid var(--line)}
+  td{padding:.45em .5em;border-bottom:1px solid #e4ddcd}
+  td.amt{text-align:right;font-weight:500}
+  .arrow{color:var(--ox)}
+  .empty{color:var(--ink2);font-style:italic;font-family:var(--serif);padding:1.5em 0;text-align:center}
+
+  /* net plan */
+  .netbox .row{display:flex;justify-content:space-between;font-family:var(--mono);
+    font-size:.86rem;padding:.3em 0;border-bottom:1px dotted #ddd5c4}
+  .netpos{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 14px}
+  .pos{font-family:var(--mono);font-size:.8rem;padding:.3em .6em;border:1px solid var(--line);background:var(--paper2)}
+  .pos.pay{border-left:3px solid var(--ox);color:var(--ox)}
+  .pos.rec{border-left:3px solid var(--green);color:var(--green)}
+  .resid{font-family:var(--mono);font-size:.9rem;margin:.35em 0;padding:.5em .7em;
+    background:#f0ece1;border-left:3px solid var(--ox)}
+  .bignum{display:flex;gap:0;margin:14px 0;border:1px solid var(--line)}
+  .bignum .c{flex:1;padding:.8em 1em;border-right:1px solid var(--line);text-align:center}
+  .bignum .c:last-child{border-right:0}
+  .bignum .v{font-family:var(--mono);font-size:1.5rem;font-weight:600}
+  .bignum .v.ox{color:var(--ox)} .bignum .v.green{color:var(--green)}
+  .bignum .k{font-family:var(--mono);font-size:.6rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink2);margin-top:.4em}
+
+  /* privacy panel */
+  .privrow{display:flex;align-items:center;gap:10px;padding:.5em 0;border-bottom:1px solid #e4ddcd;cursor:pointer}
+  .privrow:hover{background:var(--paper2)}
+  .privrow .lbl{flex:0 0 130px;font-family:var(--mono);font-size:.82rem}
+  .privrow .bar{flex:1;height:14px;background:#e4ddcd;position:relative;overflow:hidden}
+  .privrow .bar i{position:absolute;left:0;top:0;bottom:0;background:var(--ink)}
+  .privrow.op .bar i{background:var(--ox)}
+  .privrow.out .bar i{background:transparent}
+  .privrow .cnt{flex:0 0 30px;text-align:right;font-family:var(--mono);font-weight:600;font-size:.86rem}
+  .privrow.out .cnt{color:var(--ox)}
+  .privnote{font-size:.8rem;color:var(--ink2);margin-top:10px;line-height:1.4;font-style:italic}
+
+  /* actions */
+  .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px;align-items:center}
+  button{font-family:var(--mono);font-size:.82rem;letter-spacing:.03em;padding:.7em 1.2em;
+    border:1.5px solid var(--ink);background:var(--ink);color:var(--paper);cursor:pointer;
+    transition:.15s;font-weight:500}
+  button:hover{background:#000}
+  button.ghost{background:transparent;color:var(--ink)}
+  button.ghost:hover{background:var(--paper2)}
+  button.ox{background:var(--ox);border-color:var(--ox)} button.ox:hover{background:var(--ox2)}
+  button.green{background:var(--green);border-color:var(--green)} button.green:hover{filter:brightness(1.1)}
+  button:disabled{opacity:.35;cursor:not-allowed}
+  button .spin{display:inline-block;animation:sp 1s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* approval gate modal */
+  .gate{position:fixed;inset:0;background:rgba(20,18,15,.55);display:none;
+    align-items:center;justify-content:center;z-index:10}
+  .gate.on{display:flex}
+  .gate .box{background:var(--card);border:2px solid var(--ink);max-width:520px;padding:28px 30px}
+  .gate h4{font-family:var(--mono);font-size:.8rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ox);margin-bottom:12px}
+  .gate p{font-size:1.05rem;line-height:1.45;margin-bottom:8px}
+  .gate .det{font-family:var(--mono);font-size:.82rem;background:var(--paper2);padding:10px 12px;margin:14px 0;border-left:3px solid var(--ox)}
+  .gate .btns{display:flex;gap:10px;margin-top:18px}
+
+  /* log / toast */
+  #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+    background:var(--ink);color:var(--paper);font-family:var(--mono);font-size:.82rem;
+    padding:.8em 1.3em;border-radius:2px;opacity:0;transition:.3s;pointer-events:none;z-index:20;max-width:80vw}
+  #toast.on{opacity:1}
+  #toast.err{background:var(--ox)}
+  .banner{margin-top:14px;padding:.7em 1em;font-family:var(--mono);font-size:.84rem;display:none}
+  .banner.ok{display:block;background:#e7ecdf;border-left:3px solid var(--green);color:var(--green)}
+  .banner.rej{display:block;background:#f3e3e3;border-left:3px solid var(--ox);color:var(--ox)}
+  .foot{margin-top:26px;font-family:var(--mono);font-size:.68rem;color:var(--ink2);letter-spacing:.05em;border-top:1px solid var(--line);padding-top:12px}
+  .detail{font-family:var(--mono);font-size:.78rem;color:var(--ink2);margin-top:6px;display:none;padding-left:140px}
+  .detail.on{display:block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="title">Trade<b>Guard</b> · Operator Console</div>
+      <div class="sub">Private multilateral netting — drive the workflow on a live Canton network</div>
+    </div>
+    <div class="net" id="net"><span class="dot" id="netdot"></span><span id="netlabel">connecting…</span></div>
+  </header>
+
+  <!-- pipeline stepper -->
+  <div class="pipe" id="pipe">
+    <div class="st" data-step="0"><span class="n">1</span>BOOK</div>
+    <div class="st" data-step="1"><span class="n">2</span>COMPUTE NET</div>
+    <div class="st" data-step="2"><span class="n">3</span>HUMAN APPROVAL</div>
+    <div class="st" data-step="3"><span class="n">4</span>ATOMIC SETTLE</div>
+  </div>
+
+  <div class="grid">
+    <!-- LEFT: the book + the net plan -->
+    <div>
+      <div class="card">
+        <h3>Confidential Obligation Book <span class="tag" id="booktag">operator's view</span></h3>
+        <table id="booktbl"><thead><tr><th>Payer</th><th></th><th>Payee</th><th>Ref</th><th class="amt">Amount</th></tr></thead>
+          <tbody id="bookbody"><tr><td colspan="5" class="empty">No book yet — seed one to begin.</td></tr></tbody></table>
+      </div>
+
+      <div class="card netbox" id="plancard" style="margin-top:18px;display:none">
+        <h3>Agent's Netting Plan <span class="tag">off-chain brain · auditable</span></h3>
+        <div style="font-family:var(--mono);font-size:.7rem;color:var(--ink2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Net positions</div>
+        <div class="netpos" id="netpos"></div>
+        <div style="font-family:var(--mono);font-size:.7rem;color:var(--ink2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Minimal residual transfers</div>
+        <div id="residuals"></div>
+        <div class="bignum">
+          <div class="c"><div class="v" id="g_gross">–</div><div class="k">gross</div></div>
+          <div class="c"><div class="v ox" id="g_net">–</div><div class="k">net moves</div></div>
+          <div class="c"><div class="v green" id="g_pct">–</div><div class="k">netted out</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: privacy + status -->
+    <div>
+      <div class="card">
+        <h3>Privacy — who sees the book <span class="tag">live, per party</span></h3>
+        <div id="privacy"></div>
+        <div class="privnote">Each firm sees only obligations it's party to. Only the operator sees the whole book — which is why it can net it. Click a row to see refs. <b>This is the only-on-Canton property.</b></div>
+      </div>
+
+      <div class="card" style="margin-top:18px">
+        <h3>Settlement Status</h3>
+        <div style="font-family:var(--mono);font-size:.9rem;line-height:1.9">
+          <div>open netting batches &nbsp;<b id="s_batches">0</b></div>
+          <div>residual cash holdings &nbsp;<b id="s_settled">0</b></div>
+        </div>
+        <div class="banner" id="banner"></div>
+      </div>
+
+      <div class="actions">
+        <button id="b_seed" class="ghost" onclick="doSeed()">Seed book</button>
+        <button id="b_compute" onclick="doCompute()" disabled>Compute net</button>
+        <button id="b_settle" class="green" onclick="openGate()" disabled>Approve &amp; settle</button>
+        <button id="b_adv" class="ox" onclick="doAdversarial()">Test: reject fraud</button>
+        <button class="ghost" onclick="refresh()">↻</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot" id="foot">github.com/ss251/tradeguard-canton · the agent proposes, a human disposes, the ledger settles atomically</div>
+</div>
+
+<!-- human approval gate -->
+<div class="gate" id="gate">
+  <div class="box">
+    <h4>Human approval required</h4>
+    <p>The agent has computed a netting plan. It <b>cannot settle on its own.</b> Approve to write an on-ledger <span style="font-family:var(--mono)">ApprovedAction</span> and execute the atomic settlement.</p>
+    <div class="det" id="gatedet"></div>
+    <div class="btns">
+      <button class="green" onclick="doSettle()">Approve &amp; settle</button>
+      <button class="ghost" onclick="closeGate()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+let STATE=null, COMPUTED=false, JUST_SETTLED=false;
+
+function toast(msg,err){const t=$('#toast');t.textContent=msg;t.className='on'+(err?' err':'');
+  setTimeout(()=>t.className='',2600);}
+
+function setPipe(step){ // 0 book,1 compute,2 approval,3 settled
+  document.querySelectorAll('.pipe .st').forEach(el=>{
+    const s=+el.dataset.step; el.classList.remove('active','done');
+    if(s<step) el.classList.add('done'); else if(s===step) el.classList.add('active');
+  });
+}
+
+function render(st){
+  STATE=st;
+  $('#netlabel').textContent=st.network;
+  $('#netdot').className='dot';
+  // book
+  const tb=$('#bookbody');
+  if(st.book && st.book.length){
+    tb.innerHTML=st.book.map(o=>`<tr><td>${o.payer}</td><td class="arrow">→</td><td>${o.payee}</td><td style="color:var(--ink2)">${o.ref}</td><td class="amt">${o.amount.toFixed(0)} USD</td></tr>`).join('');
+    $('#booktag').textContent=st.book_size+' obligations · operator\u2019s view';
+  } else {
+    tb.innerHTML='<tr><td colspan="5" class="empty">No book yet — seed one to begin.</td></tr>';
+    $('#booktag').textContent="operator's view";
+  }
+  // privacy
+  const maxc=Math.max(1,...st.privacy.map(p=>p.count));
+  $('#privacy').innerHTML=st.privacy.map(p=>{
+    const cls=p.key==='operator'?'op':(p.key==='netout'?'out':'');
+    const w=Math.round(p.count/maxc*100);
+    return `<div class="privrow ${cls}" onclick="this.nextElementSibling.classList.toggle('on')">
+      <div class="lbl">${p.label}</div><div class="bar"><i style="width:${w}%"></i></div>
+      <div class="cnt">${p.count}</div></div>
+      <div class="detail">${p.refs.length?p.refs.join(' · '):'— sees nothing —'}</div>`;
+  }).join('');
+  // status
+  $('#s_batches').textContent=st.open_batches;
+  $('#s_settled').textContent=(st.residual_holdings!=null?st.residual_holdings:st.settled_count);
+  // plan
+  if(st.plan && COMPUTED){ renderPlan(st.plan); }
+  // pipeline + button enablement
+  $('#b_compute').disabled = !(st.book_size>0);
+  $('#b_settle').disabled = !(st.book_size>0 && COMPUTED);
+  if(JUST_SETTLED && st.book_size===0){ setPipe(3);
+    banner('ok','✓ Settled atomically — all obligations discharged, only the residual cash moved on-ledger.'); }
+  else if(COMPUTED){ setPipe(2); }
+  else if(st.book_size>0){ setPipe(1); }
+  else { setPipe(0); }
+}
+
+function renderPlan(plan){
+  $('#plancard').style.display='block';
+  $('#netpos').innerHTML=Object.entries(plan.net_positions).map(([p,v])=>{
+    const cls=v<0?'pay':(v>0?'rec':''); const sign=v>0?'+':'';
+    return `<div class="pos ${cls}">${p} ${sign}${v.toFixed(0)}</div>`;}).join('');
+  $('#residuals').innerHTML=plan.residual_transfers.map(t=>
+    `<div class="resid">${t.sender} <span class="arrow">→</span> ${t.receiver} &nbsp;<b>${t.amount.toFixed(0)} USD</b></div>`).join('');
+  $('#g_gross').textContent=plan.gross_value.toFixed(0);
+  $('#g_net').textContent=plan.net_value.toFixed(0);
+  $('#g_pct').textContent=plan.netting_efficiency_pct+'%';
+}
+
+function banner(kind,msg){const b=$('#banner');b.className='banner '+kind;b.textContent=msg;}
+
+async function refresh(){
+  try{const r=await fetch('/api/console/state');const st=await r.json();render(st);}
+  catch(e){$('#netlabel').textContent='backend offline';$('#netdot').className='dot down';}
+}
+
+function busy(id,on,label){const b=$(id);b.disabled=on;
+  if(on){b.dataset.t=b.textContent;b.innerHTML='<span class="spin">◠</span> '+(label||'working');}
+  else if(b.dataset.t){b.textContent=b.dataset.t;}}
+
+async function doSeed(){
+  busy('#b_seed',true,'seeding');
+  try{const r=await fetch('/api/console/seed',{method:'POST'});const d=await r.json();
+    COMPUTED=false; JUST_SETTLED=false; $('#plancard').style.display='none';
+    $('#banner').className='banner'; render(d.state);
+    toast(d.ok?'Book seeded on-ledger':'seed failed',!d.ok);}
+  catch(e){toast('seed error',true);} finally{busy('#b_seed',false);}
+}
+async function doCompute(){
+  busy('#b_compute',true,'computing');
+  try{const r=await fetch('/api/console/compute',{method:'POST'});const d=await r.json();
+    COMPUTED=true; render(d.state); toast('Agent computed the multilateral net');}
+  catch(e){toast('compute error',true);} finally{busy('#b_compute',false);}
+}
+function openGate(){
+  if(!STATE||!STATE.plan)return;
+  const p=STATE.plan;
+  $('#gatedet').className='det';
+  $('#gatedet').innerHTML=`net ${p.gross_value.toFixed(0)} → ${p.net_value.toFixed(0)} USD · `+
+    p.residual_transfers.map(t=>`${t.sender}→${t.receiver} ${t.amount.toFixed(0)}`).join(' · ');
+  $('#gatedet').style.display='block';
+  $('#gate').classList.add('on');
+}
+function closeGate(){$('#gate').classList.remove('on');}
+async function doSettle(){
+  closeGate(); busy('#b_settle',true,'settling');
+  try{const r=await fetch('/api/console/settle',{method:'POST'});const d=await r.json();
+    COMPUTED=false; JUST_SETTLED=d.ok; render(d.state);
+    if(d.ok) toast('✓ Settled atomically on-ledger'); else toast('settle failed',true);}
+  catch(e){toast('settle error',true);} finally{busy('#b_settle',false);}
+}
+async function doAdversarial(){
+  busy('#b_adv',true,'submitting fraud');
+  try{const r=await fetch('/api/console/adversarial',{method:'POST'});const d=await r.json();
+    if(d.rejected) banner('rej','⃠ '+d.msg+' — conservation guard fired on-ledger.');
+    toast(d.rejected?'Ledger rejected the fraud ✓':'unexpected',!d.rejected);}
+  catch(e){toast('adversarial error',true);} finally{busy('#b_adv',false);}
+}
+
+refresh();
+setInterval(()=>{ if(!$('#gate').classList.contains('on')) refresh(); }, 8000);
+</script>
+</body>
+</html>

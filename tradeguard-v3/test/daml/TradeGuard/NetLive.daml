@@ -152,3 +152,88 @@ runNetLive = do
     residualsSettled = result.residualsSettled
     grossValue = result.grossValue
     netValue = result.netValue
+
+-- | Settle the obligation book that ALREADY EXISTS on the ledger (seeded separately,
+--   e.g. by the Operator Console). Finds the operator's visible obligations, rebuilds
+--   their facts, funds the net payer, and settles the residuals atomically. This is
+--   what the console's "Approve & settle" calls so seed and settle operate on the
+--   same book (unlike runNetLive, which seeds its own).
+settleSeededBook : Script NetLiveResult
+settleSeededBook = do
+  firmA <- getOrAllocate "FirmA"
+  firmB <- getOrAllocate "FirmB"
+  firmC <- getOrAllocate "FirmC"
+  operator <- getOrAllocate "Operator"
+  bank <- getOrAllocate "NetBank"
+  regulator <- getOrAllocate "NetReg"
+  let usd = InstrumentKey with
+        depository = bank; issuer = bank; id = Id "USD"; version = "1"
+        holdingStandard = TransferableFungible
+
+  -- find the existing obligations the operator can see (the seeded book)
+  obRows <- query @Obligation operator
+  let obls  = map fst obRows
+      facts = map (\(_, o) -> NetTransfer o.payer o.payee o.amount) obRows
+  assertMsg "no seeded book to settle" (not (null obls))
+
+  -- register USD + accounts (idempotent)
+  instrs <- query @Instrument bank
+  cashI <- case find (\(_, i) -> i.id == Id "USD") instrs of
+    Some (cid, _) -> pure cid
+    None -> submit bank do
+      createCmd Instrument with depository = bank; issuer = bank; id = Id "USD"; version = "1"; holdingStandard = TransferableFungible; description = "USD"; observers = Set.empty
+  let mkAcct owner accId = do
+        accts <- query @Account bank
+        case find (\(_, a) -> a.owner == owner && a.id == Id accId) accts of
+          Some _ -> pure ()
+          None -> do _ <- submitMulti [bank, owner] [] do
+                       createCmd Account with custodian = bank; owner; id = Id accId; observers = Set.empty
+                     pure ()
+  mkAcct firmA "A-cash"; mkAcct firmB "B-cash"; mkAcct firmC "C-cash"
+
+  -- net positions from the facts: A is the sole net payer in this scenario,
+  -- so it pays each receiver its net (toC, toB) and all obligations discharge.
+  let aNet = sum [t.amount | t <- facts, t.receiver == firmA]
+           - sum [t.amount | t <- facts, t.sender == firmA]
+      bNet = sum [t.amount | t <- facts, t.receiver == firmB]
+           - sum [t.amount | t <- facts, t.sender == firmB]
+      cNet = sum [t.amount | t <- facts, t.receiver == firmC]
+           - sum [t.amount | t <- facts, t.sender == firmC]
+      toC = cNet
+      toB = bNet
+  assertMsg "scenario assumes A is sole net payer" (aNet < 0.0 && bNet >= 0.0 && cNet >= 0.0)
+
+  -- fund A with its residual (two holdings sized to the receivers' nets)
+  aCashC <- submitMulti [bank, firmA] [] do
+    exerciseCmd cashI Issue with custodian = bank; owner = firmA; accountId = Id "A-cash"; amount = toC
+  aCashB <- submitMulti [bank, firmA] [] do
+    exerciseCmd cashI Issue with custodian = bank; owner = firmA; accountId = Id "A-cash"; amount = toB
+
+  auths <- query @SettlementAuthority bank
+  auth <- case find (\(_, a) -> a.coordinator == operator) auths of
+    Some (cid, _) -> pure cid
+    None -> submit bank do createCmd SettlementAuthority with custodian = bank; coordinator = operator
+
+  let legAC = Leg with sender = firmA; receiver = firmC; custodian = bank; instrument = usd; amount = toC; senderAccountId = Id "A-cash"; receiverAccountId = Id "C-cash"
+      legAB = Leg with sender = firmA; receiver = firmB; custodian = bank; instrument = usd; amount = toB; senderAccountId = Id "A-cash"; receiverAccountId = Id "B-cash"
+  batch <- submit operator do
+    createCmd NettingBatch with
+      operator; obligations = obls; obligationFacts = facts
+      residualLegs = [legAC, legAB]; cashInstrument = usd
+      parties = Set.fromList [firmA, firmB, firmC]
+      regulator = Some regulator; status = Pending
+
+  lockedC <- submitMulti [bank, firmA] [] do exerciseCmd aCashC LockHolding with locker = operator; context = "console-net"
+  lockedB <- submitMulti [bank, firmA] [] do exerciseCmd aCashB LockHolding with locker = operator; context = "console-net"
+  let allocs = [ AllocatedLeg with leg = legAC; holdingCid = lockedC; authorityCid = auth
+               , AllocatedLeg with leg = legAB; holdingCid = lockedB; authorityCid = auth ]
+  result <- submitMulti (operator :: [firmA, firmB, firmC]) [] do
+    exerciseCmd batch SettleNetting with allocations = allocs
+
+  pure NetLiveResult with
+    firmA; firmB; firmC; operator; bank
+    obligationsDischarged = result.obligationsDischarged
+    residualsSettled = result.residualsSettled
+    grossValue = result.grossValue
+    netValue = result.netValue
+
