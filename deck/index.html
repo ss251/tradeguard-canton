@@ -19,16 +19,16 @@
     display:flex;align-items:center;justify-content:center;overflow:hidden}
   .stage{width:100vw;height:100vh;position:relative}
   .slide{position:absolute;inset:0;display:none;flex-direction:column;
-    padding:6vh 7vw;background:var(--paper);
+    padding:84px 7vw 5vh;background:var(--paper);
     background-image:radial-gradient(circle at 1px 1px, rgba(0,0,0,.04) 1px, transparent 0);
     background-size:22px 22px}
   .slide.on{display:flex}
-  .slide:not(.center){padding-top:11vh}
+  .slide.center{padding-top:5vh;justify-content:center}
   .kicker{font-family:var(--mono);font-size:.78rem;letter-spacing:.22em;
     text-transform:uppercase;color:var(--ox);font-weight:600}
-  .num{position:absolute;top:5vh;right:7vw;font-family:var(--mono);
+  .num{position:absolute;top:30px;right:7vw;font-family:var(--mono);
     font-size:.78rem;color:var(--ink2);letter-spacing:.1em}
-  .brand{position:absolute;top:5vh;left:7vw;font-family:var(--mono);
+  .brand{position:absolute;top:30px;left:7vw;font-family:var(--mono);
     font-size:.78rem;letter-spacing:.14em;color:var(--ink2)}
   .brand b{color:var(--ox);font-weight:600}
   h1{font-size:clamp(2.4rem,5.6vw,5rem);line-height:1.02;font-weight:500;
