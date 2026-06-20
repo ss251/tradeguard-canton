@@ -1,29 +1,23 @@
 # TradeGuard
 
-**Private, atomic, governed settlement for B2B trade finance — on Canton.**
+**Private multilateral netting + atomic settlement for B2B trade finance — on Canton.**
 
-TradeGuard is a settlement application for the [Build on Canton](https://www.encodeclub.com/) hackathon.
-It replaces the slow, paper-heavy Letter-of-Credit process with on-ledger
-**Delivery-versus-Payment (DvP)** that is:
+TradeGuard is a settlement-optimization application for the [Build on Canton](https://www.encodeclub.com/) hackathon. Its headline capability is the thing a transparent chain *cannot* safely do:
 
-- **Atomic** — both legs of a trade move in one transaction, or neither does. No
-  Herstatt/settlement risk; the failure mode is "nothing happened," never "money
-  is stuck."
-- **Private** — each party sees only its own legs. A regulator gets scoped
-  oversight. An outsider sees *nothing*. Enforced by Canton's sub-transaction
-  privacy — not by the UI.
-- **Governed by a real agent** — an off-chain reasoning agent monitors the ledger,
-  decides when a trade is ready to settle (with an auditable rationale), and
-  **proposes** settlement. A human must approve before the ledger executes. The
-  agent can never move assets on its own.
-- **Optimizing** — for multi-party books, the agent computes a multilateral **net**
-  and settles only the residuals atomically (80%+ value netted out in our demo).
+> **Net a book of obligations across many parties who can't see each other's positions, then settle only the residuals — atomically.**
 
-> **Why this needs Canton.** The agent reasons and settles over data it is a
-> stakeholder in. Netting requires seeing many parties' positions — only safe when
-> privacy is built into the protocol. The same logic on a transparent chain would
-> leak every position it touches. TradeGuard is *only possible* because privacy is
-> the substrate.
+A governed AI agent, acting as an authorized netting operator, is the only party that sees the whole book. It computes the multilateral net, proposes the minimal residual settlement, waits for human approval, and then discharges every obligation **and** moves only the residual cash in a single all-or-nothing transaction. In our live run, **5 obligations across 3 firms (360 gross) net to 2 transfers (70) — 80.6% of value never moves.**
+
+It is:
+
+- **Privacy-optimizing** — netting requires seeing many parties' positions. On a transparent chain that means exposing every position publicly. Here each obligation is visible only to its two counterparties and the operator; **no firm sees the whole book.** The optimization is only *safe* because privacy is the substrate. *(Proven live: FirmA/B/C each see only their own obligations; the operator sees all; an outsider sees nothing.)*
+- **Atomic** — obligations discharge and residual cash moves in one transaction, or neither does. No Herstatt/settlement risk; the failure mode is "nothing happened," never "money is stuck." The underlying primitive is an atomic Delivery-versus-Payment (DvP) engine (tokenized asset leg ⇄ cash leg).
+- **Governed by a real agent** — the off-chain agent monitors the ledger, decides with an auditable rationale, and **proposes** — it can never move assets on its own. A human approval (an on-ledger `ApprovedAction`) gates every settlement.
+- **Adversarially safe** — the netting contract enforces, on-ledger, that a proposal *conserves value* (residual net per party equals the netted obligations), is *efficient* (residual gross ≤ obligation gross), and is *funded* (an underfunded leg rolls back the whole transaction). A fraudulent under-settlement is rejected by the ledger, not trusted.
+
+> **Why this needs Canton.** Multilateral netting over confidential positions is the load-bearing idea, and it is *only possible* because Canton's sub-transaction privacy lets an authorized operator net positions that the counterparties themselves can't see. Pure deterministic settlement can't deliver safe private netting alone — that's the gap TradeGuard fills.
+
+_Scope note: TradeGuard automates the **settlement and netting layer** of trade finance. It does not replace the legal/credit machinery of a Letter of Credit (discrepancies, amendments, confirmation) — it removes the settlement risk and liquidity drag that sit on top of it._
 
 ---
 
@@ -31,8 +25,10 @@ It replaces the slow, paper-heavy Letter-of-Credit process with on-ledger
 
 | Path | What |
 |------|------|
-| `tradeguard/daml/` | Institution-grade Daml model (8 modules, ~1,150 lines), modeled on **daml-finance v4**. |
-| `tradeguard/daml/TradeGuard/Test/` | 11 Daml Script tests — happy path, privacy, atomicity, exception, attestation, reject. |
+| `tradeguard-v3/main/daml/TradeGuard/Netting.daml` | **Private multilateral netting** — Obligation + NettingBatch w/ on-ledger adversarial guards. |
+| `tradeguard/daml/` | Institution-grade Daml model (daml-finance v4 patterns): Holdings, Instruments, atomic batch settlement, attestation gating. |
+| `tradeguard-v3/` | Canton 3.x (DPM/SDK 3.4.11) keyless port — the **real-network deploy target**. |
+| `tradeguard/daml/TradeGuard/Test/` | 14 Daml Script tests — netting (3), happy path, privacy, atomicity, exception, attestation, reject. |
 | `agent/` | The off-chain reasoning agent (Python): `ledger_client`, `reasoner`, `netting`, `cli`. |
 | `ui/` | Live role-based UI (`live.html` + `ui_server.py`) reading the real ledger over the JSON API. |
 | `scripts/` | `run_stack.sh` (bring up the full stack), `demo.sh` (run the whole story), `linear_post.py`. |
