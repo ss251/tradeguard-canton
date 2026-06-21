@@ -164,7 +164,7 @@
       <div class="card">
         <h3>Privacy — who sees the book <span class="tag">live, per party</span></h3>
         <div id="privacy"></div>
-        <div class="privnote">Each firm sees only obligations it's party to. Only the operator sees the whole book — which is why it can net it. Click a row to see refs. <b>This is the only-on-Canton property.</b></div>
+        <div class="privnote">The operator sees the whole book to compute the net; every firm sees only its own obligations; the ledger itself rejects any under-settlement. <b>No trusted compute, no full-book disclosure — privacy is what makes safe netting possible.</b> Click a row to see refs.</div>
       </div>
 
       <div class="card" style="margin-top:18px">
@@ -311,10 +311,16 @@ async function doSettle(){
   catch(e){toast('settle error',true);} finally{busy('#b_settle',false);}
 }
 async function doAdversarial(){
-  busy('#b_adv',true,'submitting fraud');
+  busy('#b_adv',true,'submitting fraud to ledger');
   try{const r=await fetch('/api/console/adversarial',{method:'POST'});const d=await r.json();
-    if(d.rejected) banner('rej','⃠ '+d.msg+' — conservation guard fired on-ledger.');
-    toast(d.rejected?'Ledger rejected the fraud ✓':'unexpected',!d.rejected);}
+    if(d.rejected){
+      banner('rej','⃠ REJECTED BY THE LEDGER — '+(d.fraud||'fraudulent under-settlement')+
+        '. On-chain guard: "'+(d.ledger_error||'conservation violated')+'"');
+      toast('Ledger rejected the fraud ✓');
+    } else if(d.error){ banner('rej','error: '+d.error); toast('error',true); }
+    else { toast('unexpected: not rejected',true); }
+    if(d.state) render(d.state);
+  }
   catch(e){toast('adversarial error',true);} finally{busy('#b_adv',false);}
 }
 

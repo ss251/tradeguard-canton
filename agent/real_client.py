@@ -101,12 +101,33 @@ class RealLedgerClient:
                             "payload": ce.get("createArgument", {})})
         return out
 
-    def create(self, module_entity: str, payload: dict) -> dict:
+    def create(self, module_entity: str, payload: dict, act_as: list[str] | None = None) -> dict:
+        actors = act_as or [self.party]
         body = {"commands": [{"CreateCommand": {
             "templateId": self.tid(module_entity), "createArguments": payload}}],
             "commandId": f"tg-{os.urandom(4).hex()}",
-            "actAs": [self.party], "readAs": [self.party]}
+            "actAs": actors, "readAs": actors}
         return self._post("/v2/commands/submit-and-wait", body)
+
+    def create_tree(self, module_entity: str, payload: dict, act_as: list[str] | None = None) -> dict:
+        """Create and return the transaction tree (so the new contractId is available)."""
+        actors = act_as or [self.party]
+        body = {"commands": [{"CreateCommand": {
+            "templateId": self.tid(module_entity), "createArguments": payload}}],
+            "commandId": f"tg-{os.urandom(4).hex()}",
+            "actAs": actors, "readAs": actors}
+        return self._post("/v2/commands/submit-and-wait-for-transaction-tree", body)
+
+    def exercise_tree(self, module_entity: str, contract_id: str, choice: str,
+                      argument: dict | None = None, act_as: list[str] | None = None) -> dict:
+        """Exercise and return the transaction tree (created/result contracts visible)."""
+        actors = act_as or [self.party]
+        body = {"commands": [{"ExerciseCommand": {
+            "templateId": self.tid(module_entity), "contractId": contract_id,
+            "choice": choice, "choiceArgument": argument or {}}}],
+            "commandId": f"tg-{os.urandom(4).hex()}",
+            "actAs": actors, "readAs": actors}
+        return self._post("/v2/commands/submit-and-wait-for-transaction-tree", body)
 
     def exercise(self, module_entity: str, contract_id: str, choice: str,
                  argument: dict | None = None, act_as: list[str] | None = None) -> dict:

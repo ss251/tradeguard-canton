@@ -34,6 +34,7 @@ sys.path.insert(0, PROJECT)
 
 from agent.real_client import RealLedgerClient, load_real_parties, admin_token  # noqa: E402
 from agent.netting import Obligation, netting_report  # noqa: E402
+from agent import net_settle  # noqa: E402  (instant v2 settle + live fraud rejection)
 
 V3_TEST = os.path.join(PROJECT, "tradeguard-v3", "test")
 DAR = os.path.join(V3_TEST, ".daml", "dist", "tradeguard-test-1.0.0.dar")
@@ -162,21 +163,24 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         try:
             if u.path == "/api/console/seed":
-                ok, log = _run_script("seedNetBookOnly")
-                self._send(200, {"ok": ok, "log": log, "state": build_state()})
+                # create a dense 12-obligation book via instant v2 creates
+                res = net_settle.seed_book(dense=True)
+                res["state"] = build_state()
+                self._send(200, res)
             elif u.path == "/api/console/compute":
                 # pure read + off-chain net; no ledger write
                 self._send(200, {"ok": True, "state": build_state()})
             elif u.path == "/api/console/settle":
-                # human-approved atomic settle of the ALREADY-SEEDED book
-                ok, log = _run_script("settleSeededBook")
-                self._send(200, {"ok": ok, "log": log, "state": build_state()})
+                # human-approved atomic settle via the instant v2 client (~2-3s)
+                res = net_settle.settle_real()
+                res["state"] = build_state()
+                self._send(200, res)
             elif u.path == "/api/console/adversarial":
-                # run the adversarial test — the ledger MUST reject the fraud
-                ok = self._run_adversarial()
-                self._send(200, {"ok": True, "rejected": ok,
-                                 "msg": "Ledger rejected the fraudulent under-settlement"
-                                        if ok else "unexpected: fraud not rejected"})
+                # submit a REAL fraudulent NettingBatch to the LIVE ledger; the
+                # on-ledger conservation guard rejects it (returns the actual error)
+                res = net_settle.attempt_fraud()
+                res["state"] = build_state()
+                self._send(200, res)
             else:
                 self._send(404, {"error": "not found"})
         except Exception as e:
