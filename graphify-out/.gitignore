@@ -1,0 +1,4 @@
+# machine-specific / regenerable graphify internals
+.graphify_python
+.graphify_root
+cache/
