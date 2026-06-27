@@ -1,3 +1,5 @@
+> **Process record (pre-pivot).** This is the original research synthesis. At this stage the lead idea was codenamed **PrivyFactor** (private invoice factoring), with **TradeGuard** as a backup. We ultimately pivoted to TradeGuard and reframed it as **private multilateral netting + atomic settlement**. The shipped stack also differs from what's scoped below (we used Canton Builder LocalNet + JSON Ledger API v2, not cn-quickstart/PQS). Kept for the audit trail — see the top-level `README.md` for the actual product.
+
 # Canton Hackathon — Strategy & Findings
 
 **Synthesized from 4 Grok (Expert mode) research passes. Source files:** `research/q1_tech_stack.md`, `q2_build_ideas.md`, `q3_winning_strategy.md`, `q4_landscape_resources.md`

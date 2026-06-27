@@ -1,3 +1,5 @@
+> **Process record (pre-pivot).** This is an early planning artifact from the research phase, when the project was codenamed **PrivyFactor** (private invoice factoring) and we were still scoping the Daml-Finance/cn-quickstart/PQS stack. The project later pivoted to **TradeGuard** (private multilateral netting + atomic settlement) and the shipped stack differs (Canton Builder LocalNet, JSON Ledger API v2, no PQS). Kept here for the audit trail — see the top-level `README.md` for the actual product.
+
 # Pipeline Design — Linear + Kanban
 
 ## Roles (two-layer system)
