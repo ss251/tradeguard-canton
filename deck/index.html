@@ -100,6 +100,9 @@
   .why{border-left:3px solid var(--ox);padding-left:1.2em;margin-top:1.3em;max-width:50ch;
     font-size:clamp(1rem,1.5vw,1.3rem);line-height:1.4;color:var(--ink2)}
   .why b{color:var(--ink);font-style:italic}
+  .road{margin-top:1.4em;font-family:var(--mono);font-size:.82rem;letter-spacing:.04em;
+    color:var(--ink2);border:1px dashed var(--line);padding:.7em 1em;background:var(--paper2);max-width:60ch}
+  .road b{color:var(--amber);text-transform:uppercase;font-size:.72rem;letter-spacing:.12em;display:block;margin-bottom:.25em}
 </style>
 </head>
 <body>
@@ -107,39 +110,39 @@
 
   <!-- 1 TITLE -->
   <section class="slide on center">
-    <div class="kicker">Build on Canton · TradeFi / RWA</div>
+    <div class="kicker">Build on Canton · Private Settlement</div>
     <h1>Trade<span style="color:var(--ox)">Guard</span></h1>
-    <p class="lead">Private multilateral <span class="em">netting</span> + atomic settlement for trade finance — on Canton.</p>
+    <p class="lead">A private netting &amp; settlement rail for <span class="em">fintechs that compete</span> — on Canton.</p>
     <div class="big-quote" style="margin-top:1.4em;font-size:clamp(1.1rem,2vw,1.6rem)">
-      Firms that owe each other can net it down and settle the residual —<br>
-      <b>without ever showing each other their books.</b></div>
+      Rivals that owe each other can net the book and settle only the residual —<br>
+      <b>without ever exposing their flow to each other.</b></div>
   </section>
 
   <!-- 2 PROBLEM -->
   <section class="slide">
     <div class="kicker">The problem</div>
-    <h2>Multi-party trade finance is a web of obligations.</h2>
-    <p class="lead">Today you either…</p>
+    <h2>Competing fintechs owe each other across corridors.</h2>
+    <p class="lead">Payment fintechs, neobanks and PSPs settle obligations between each other every day. Today they either…</p>
     <ul class="steps">
-      <li><span class="n">A</span><div>Settle <b>gross</b> — every obligation moves money. <span class="sub">Huge liquidity drag.</span></div></li>
-      <li><span class="n">B</span><div>Net through a <b>trusted central party</b> that sees everyone's positions. <span class="sub">A privacy &amp; trust problem.</span></div></li>
+      <li><span class="n">A</span><div><b>Prefund nostro accounts</b> and settle gross. <span class="sub">Capital locked up across every corridor — pure liquidity drag.</span></div></li>
+      <li><span class="n">B</span><div>Net through a <b>trusted central party</b> that sees everyone's flow. <span class="sub">Your volumes &amp; counterparty graph leak your customer base.</span></div></li>
     </ul>
-    <div class="why">And cross-leg settlement carries <b>Herstatt risk</b>: you pay, and you don't receive.</div>
+    <div class="why">And cross-currency settlement carries <b>Herstatt risk</b>: you pay, and you don't receive.</div>
   </section>
 
   <!-- 3 INSIGHT -->
   <section class="slide">
     <div class="kicker">The insight · why only on Canton</div>
-    <div class="big-quote" style="margin-top:.3em">You can only net positions you're allowed to see. Canton lets an authorized operator net positions <b>the counterparties can't see each other's.</b></div>
+    <div class="big-quote" style="margin-top:.3em">You can only net positions you're allowed to see. Canton lets an authorized operator net positions <b>the rivals can't see each other's.</b></div>
     <table class="priv">
       <tr><th>Reader</th><th>Sees of the 5-obligation book</th></tr>
-      <tr><td>Firm A</td><td class="see">3 — only its own (A→B, A→C, C→A)</td></tr>
-      <tr><td>Firm B</td><td class="see">3 — only its own</td></tr>
-      <tr><td>Firm C</td><td class="see">4 — only its own</td></tr>
+      <tr><td>Fintech A</td><td class="see">3 — only its own (A→B, A→C, C→A)</td></tr>
+      <tr><td>Fintech B</td><td class="see">3 — only its own</td></tr>
+      <tr><td>Fintech C</td><td class="see">4 — only its own</td></tr>
       <tr class="op"><td>Operator <span class="sub">(agent)</span></td><td class="all">5 — the whole book</td></tr>
       <tr class="out"><td>Outsider</td><td class="none">0 — nothing</td></tr>
     </table>
-    <div class="foot">Sub-transaction privacy doing real algorithmic work — proven live over the JSON Ledger API.</div>
+    <div class="foot">A public chain would leak the whole competitive map. Canton's sub-transaction privacy does the real algorithmic work — proven live over the JSON Ledger API.</div>
   </section>
 
   <!-- 4 WHAT THE AGENT DOES -->
@@ -179,7 +182,7 @@
     <div class="kicker">It's real — not a sandbox</div>
     <h2>Deployed and running on a real Canton network.</h2>
     <div class="dvp">
-      <div class="leg">tokenized asset</div><div class="swap">⇄</div><div class="leg">cash</div>
+      <div class="leg">tokenized deposit</div><div class="swap">⇄</div><div class="leg">stablecoin</div>
       <div style="margin-left:1em" class="sub">atomic DvP — the substrate under netting</div>
     </div>
     <div class="chips">
@@ -197,7 +200,8 @@
     <div class="kicker">Why it wins</div>
     <h2 style="max-width:20ch">Atomic kills settlement risk.<br>Private netting kills the liquidity drag.</h2>
     <p class="lead">…without a trusted central party — the thing a transparent chain can't do. Governed by an agent, made safe by on-ledger guards.</p>
-    <div class="big-quote" style="margin-top:1.3em;font-size:clamp(1.2rem,2.2vw,1.8rem)">TradeGuard is the settlement-and-netting layer institutions actually need — <b>private, atomic, agent-operated, provably safe.</b></div>
+    <div class="big-quote" style="margin-top:1.3em;font-size:clamp(1.2rem,2.2vw,1.8rem)">TradeGuard is the settlement-and-netting layer competing fintechs actually need — <b>private, atomic, agent-operated, provably safe.</b></div>
+    <div class="road"><b>Roadmap</b>Cross-currency netting under on-ledger credit limits &amp; liquidity floors, steered by a natural-language risk policy.</div>
     <div class="foot" style="border:0;margin-top:2em">github.com/ss251/tradeguard-canton</div>
   </section>
 
