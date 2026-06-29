@@ -24,6 +24,7 @@ module TradeGuard.Netting where
 
 import qualified DA.Set as Set
 import DA.Foldable (forA_)
+import DA.List (dedup)
 import TradeGuard.Types
 import TradeGuard.Holding
 import TradeGuard.Settlement
@@ -53,13 +54,42 @@ template Obligation
       controller operator
       do return ()
 
--- | A residual transfer the agent proposes after netting: move `amount` from
---   `sender` to `receiver`. (A thin alias over a settlement Leg for clarity.)
+-- | An on-ledger bilateral credit limit: the maximum `from` may owe `to` in
+--   `currency` after netting. This is a fintech's real risk constraint, written to
+--   the ledger and enforced by the settle choice — so a netting plan that would
+--   leave one party over-exposed to a single counterparty is REJECTED by the
+--   ledger, not merely flagged off-chain. The obligor (`from`) signs its own limit
+--   (it accepts the cap), the operator co-signs (it administers the rail), and the
+--   creditor (`to`) observes. No party — not even the operator — can settle a plan
+--   that breaches it.
+template CreditLimit
+  with
+    operator : Party
+      -- ^ The netting operator administering the rail.
+    from : Party
+      -- ^ The potential obligor whose exposure is capped.
+    to : Party
+      -- ^ The counterparty the cap protects.
+    currency : Text
+      -- ^ The currency the limit applies to.
+    limit : Decimal
+      -- ^ Max net amount `from` may owe `to` in `currency` after a settlement.
+  where
+    signatory from, operator
+    observer to
+    ensure limit >= 0.0
+
+-- | A residual transfer the agent proposes after netting: move `amount` of
+--   `currency` from `sender` to `receiver`. (A thin alias over a settlement Leg
+--   for clarity, tagged with the currency so conservation is checked per-currency.)
 data NetTransfer = NetTransfer
   with
     sender : Party
     receiver : Party
     amount : Decimal
+    currency : Text
+      -- ^ The instrument/currency id (e.g. "USD", "EUR"). Netting conserves value
+      --   independently per currency — a USD residual can never offset a EUR debt.
   deriving (Eq, Show)
 
 -- | Result of a netting settlement.
@@ -93,6 +123,10 @@ template NettingBatch
     residualLegs : [Leg]
       -- ^ The minimal residual transfers that settle the net.
     cashInstrument : InstrumentKey
+    creditLimits : [ContractId CreditLimit]
+      -- ^ On-ledger bilateral credit limits the settled plan must respect. The
+      --   settle choice fetches each and rejects any plan whose residual transfer
+      --   from->to in a currency exceeds the cap. Empty => unconstrained (back-compat).
     parties : Parties
       -- ^ All firms in the book (controllers of settlement).
     regulator : Optional Party
@@ -110,33 +144,64 @@ template NettingBatch
         allocations : [AllocatedLeg]
       controller operator :: Set.toList parties
       do
-        -- adversarial guard 1: conservation — each party's net across the
-        -- obligations must equal its net across the residual legs.
-        let netOf transfers party =
-              sum [t.amount | t <- transfers, t.receiver == party]
-              - sum [t.amount | t <- transfers, t.sender == party]
-            legAsTransfer l = NetTransfer with
+        -- residual transfers, each tagged with its leg's currency (instrument id).
+        let legAsTransfer l = NetTransfer with
               sender = l.sender; receiver = l.receiver; amount = l.amount
+              currency = unId l.instrument.id
             residualTransfers = map legAsTransfer residualLegs
             allParties = Set.toList parties
-        forA_ allParties $ \p ->
-          assertMsg
-            ("netting must conserve value for " <> show p)
-            (netOf obligationFacts p == netOf residualTransfers p)
+            -- net of `transfers` for `party` restricted to `cur`
+            netOfCur transfers party cur =
+              sum [t.amount | t <- transfers, t.currency == cur, t.receiver == party]
+              - sum [t.amount | t <- transfers, t.currency == cur, t.sender == party]
+            -- every currency that appears anywhere in the book or the plan
+            currencies = dedup ([t.currency | t <- obligationFacts]
+                              <> [t.currency | t <- residualTransfers])
 
-        -- adversarial guard 2: efficiency — residual gross <= obligation gross.
-        let grossObl = sum [t.amount | t <- obligationFacts]
-            grossRes = sum [t.amount | t <- residualTransfers]
-        assertMsg "residual gross cannot exceed obligation gross"
-          (grossRes <= grossObl)
+        -- adversarial guard 1: conservation, checked INDEPENDENTLY PER CURRENCY.
+        -- A USD residual can never offset a EUR obligation — each party's net in
+        -- each currency across the obligations must equal its net in that currency
+        -- across the residual legs.
+        forA_ currencies $ \cur ->
+          forA_ allParties $ \p ->
+            assertMsg
+              ("netting must conserve value for " <> show p <> " in " <> cur)
+              (netOfCur obligationFacts p cur == netOfCur residualTransfers p cur)
+
+        -- adversarial guard 2: efficiency — residual gross <= obligation gross,
+        -- per currency (the net can never be larger than what it nets).
+        forA_ currencies $ \cur -> do
+          let grossOblC = sum [t.amount | t <- obligationFacts, t.currency == cur]
+              grossResC = sum [t.amount | t <- residualTransfers, t.currency == cur]
+          assertMsg ("residual gross cannot exceed obligation gross in " <> cur)
+            (grossResC <= grossOblC)
         assertMsg "must settle every residual leg"
           (length allocations == length residualLegs)
+
+        -- adversarial guard 3: on-ledger CREDIT LIMITS. For each limit contract,
+        -- the residual amount `from` pays `to` in that currency must not exceed the
+        -- cap. A plan that over-exposes one party to a single counterparty is
+        -- REJECTED by the ledger — the operator cannot settle around a firm's own
+        -- risk constraint, even though it controls the rail.
+        forA_ creditLimits $ \clCid -> do
+          cl <- fetch clCid
+          let owed = sum [ t.amount | t <- residualTransfers
+                         , t.sender == cl.from, t.receiver == cl.to
+                         , t.currency == cl.currency ]
+          assertMsg
+            ("credit limit breached: " <> show cl.from <> " -> " <> show cl.to
+              <> " in " <> cl.currency)
+            (owed <= cl.limit)
+
+        -- per-currency gross totals for the result record
+        let grossObl = sum [t.amount | t <- obligationFacts]
+            grossRes = sum [t.amount | t <- residualTransfers]
 
         -- discharge every netted obligation (operator authority; delegated)
         forA_ obligations (`exercise` Discharge)
 
         -- settle residuals atomically via the proven lock-then-swap path.
-        -- adversarial guard 3 (funding) is enforced here: a locked holding that
+        -- adversarial guard 4 (funding) is enforced here: a locked holding that
         -- does not cover its leg makes SettleTransfer fail -> whole tx rolls back.
         forA_ allocations $ \al ->
           exercise al.authorityCid ExecuteSettleTransfer with

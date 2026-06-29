@@ -99,11 +99,11 @@ testThreePartyNetting = do
 
   let obls = [o1, o2, o3, o4, o5]
       facts =
-        [ NetTransfer w.firmA w.firmB 100.0
-        , NetTransfer w.firmB w.firmC 100.0
-        , NetTransfer w.firmC w.firmA 80.0
-        , NetTransfer w.firmA w.firmC 50.0
-        , NetTransfer w.firmC w.firmB 30.0 ]
+        [ NetTransfer w.firmA w.firmB 100.0 "USD"
+        , NetTransfer w.firmB w.firmC 100.0 "USD"
+        , NetTransfer w.firmC w.firmA 80.0 "USD"
+        , NetTransfer w.firmA w.firmC 50.0 "USD"
+        , NetTransfer w.firmC w.firmB 30.0 "USD" ]
       -- agent-computed minimal residuals: A->C 40, A->B 30
       legAC = Leg with sender = w.firmA; receiver = w.firmC; custodian = w.bank; instrument = w.usd; amount = 40.0; senderAccountId = Id "A-cash"; receiverAccountId = Id "C-cash"
       legAB = Leg with sender = w.firmA; receiver = w.firmB; custodian = w.bank; instrument = w.usd; amount = 30.0; senderAccountId = Id "A-cash"; receiverAccountId = Id "B-cash"
@@ -113,7 +113,7 @@ testThreePartyNetting = do
   batch <- submit w.operator do
     createCmd NettingBatch with
       operator = w.operator; obligations = obls; obligationFacts = facts
-      residualLegs; cashInstrument = w.usd
+      residualLegs; cashInstrument = w.usd; creditLimits = []
       parties = Set.fromList [w.firmA, w.firmB, w.firmC]
       regulator = Some w.regulator; status = Pending
 
@@ -165,13 +165,13 @@ testNettingRejectsValueViolation = do
 
   o1 <- mkObligation w.firmA w.firmB w.operator w.usd 100.0 "A->B"
   -- net: A owes B 100. A FRAUDULENT proposal claims only 10 needs to move.
-  let facts = [ NetTransfer w.firmA w.firmB 100.0 ]
+  let facts = [ NetTransfer w.firmA w.firmB 100.0 "USD" ]
       badLeg = Leg with sender = w.firmA; receiver = w.firmB; custodian = w.bank; instrument = w.usd; amount = 10.0; senderAccountId = Id "A-cash"; receiverAccountId = Id "B-cash"  -- under-settles by 90!
       badLegs = [ badLeg ]
   batch <- submit w.operator do
     createCmd NettingBatch with
       operator = w.operator; obligations = [o1]; obligationFacts = facts
-      residualLegs = badLegs; cashInstrument = w.usd
+      residualLegs = badLegs; cashInstrument = w.usd; creditLimits = []
       parties = Set.fromList [w.firmA, w.firmB]
       regulator = None; status = Pending
 
@@ -209,4 +209,124 @@ testNettingPrivacy = do
   length outSees === 0
 
   debug "testNettingPrivacy PASSED: firms see only their own obligations (A:2 B:2 operator:3 outsider:0)"
+  pure ()
+
+-- | MULTI-CURRENCY: a book with both USD and EUR obligations nets each currency
+--   INDEPENDENTLY and settles atomically. A USD residual can never offset a EUR
+--   debt — the per-currency conservation guard enforces this on-ledger.
+--   Book:  USD: A owes B 100 ; B owes A 40   -> A net USD -60 (pays B 60)
+--          EUR: B owes A 50                  -> B net EUR -50 (pays A 50)
+--   Residuals: A->B 60 USD, B->A 50 EUR. Both settle in ONE atomic transaction.
+testMultiCurrencyNetting : Script ()
+testMultiCurrencyNetting = do
+  w <- setupNetWorld
+  let eur = InstrumentKey with
+        depository = w.bank; issuer = w.bank; id = Id "EUR"; version = "1"
+        holdingStandard = TransferableFungible
+
+  usdI <- submit w.bank do
+    createCmd Instrument with
+      depository = w.bank; issuer = w.bank; id = Id "USD"; version = "1"
+      holdingStandard = TransferableFungible; description = "USD"; observers = Set.empty
+  eurI <- submit w.bank do
+    createCmd Instrument with
+      depository = w.bank; issuer = w.bank; id = Id "EUR"; version = "1"
+      holdingStandard = TransferableFungible; description = "EUR"; observers = Set.empty
+  mkCashAccount w.bank w.firmA "A-cash"
+  mkCashAccount w.bank w.firmB "B-cash"
+
+  _ <- submit w.bank do createCmd SettlementAuthority with custodian = w.bank; coordinator = w.operator
+  auth <- findAuth w.bank w.operator
+
+  -- the cross-currency book
+  oUsd1 <- mkObligation w.firmA w.firmB w.operator w.usd 100.0 "A->B 100 USD"
+  oUsd2 <- mkObligation w.firmB w.firmA w.operator w.usd 40.0  "B->A 40 USD"
+  oEur1 <- mkObligation w.firmB w.firmA w.operator eur 50.0    "B->A 50 EUR"
+
+  let obls = [oUsd1, oUsd2, oEur1]
+      facts =
+        [ NetTransfer w.firmA w.firmB 100.0 "USD"
+        , NetTransfer w.firmB w.firmA 40.0  "USD"
+        , NetTransfer w.firmB w.firmA 50.0  "EUR" ]
+      -- residuals: A pays B 60 USD ; B pays A 50 EUR
+      legUsd = Leg with sender = w.firmA; receiver = w.firmB; custodian = w.bank; instrument = w.usd; amount = 60.0; senderAccountId = Id "A-cash"; receiverAccountId = Id "B-cash"
+      legEur = Leg with sender = w.firmB; receiver = w.firmA; custodian = w.bank; instrument = eur; amount = 50.0; senderAccountId = Id "B-cash"; receiverAccountId = Id "A-cash"
+      residualLegs = [legUsd, legEur]
+
+  batch <- submit w.operator do
+    createCmd NettingBatch with
+      operator = w.operator; obligations = obls; obligationFacts = facts
+      residualLegs; cashInstrument = w.usd; creditLimits = []
+      parties = Set.fromList [w.firmA, w.firmB]
+      regulator = Some w.regulator; status = Pending
+
+  -- fund each residual sender in the right currency
+  aUsd <- issueCash usdI w.bank w.firmA "A-cash" 60.0
+  bEur <- submitMulti [w.bank, w.firmB] [] do
+    exerciseCmd eurI Issue with custodian = w.bank; owner = w.firmB; accountId = Id "B-cash"; amount = 50.0
+  lockedUsd <- submitMulti [w.bank, w.firmA] [] do
+    exerciseCmd aUsd LockHolding with locker = w.operator; context = "mc"
+  lockedEur <- submitMulti [w.bank, w.firmB] [] do
+    exerciseCmd bEur LockHolding with locker = w.operator; context = "mc"
+  let allocs =
+        [ AllocatedLeg with leg = legUsd; holdingCid = lockedUsd; authorityCid = auth
+        , AllocatedLeg with leg = legEur; holdingCid = lockedEur; authorityCid = auth ]
+
+  result <- submitMulti (w.operator :: [w.firmA, w.firmB]) [] do
+    exerciseCmd batch SettleNetting with allocations = allocs
+
+  result.obligationsDischarged === 3
+  result.residualsSettled === 2
+
+  debug "testMultiCurrencyNetting PASSED: USD and EUR netted independently, settled atomically (A->B 60 USD, B->A 50 EUR)"
+  pure ()
+
+-- | CREDIT LIMIT: an on-ledger bilateral credit limit REJECTS a netting plan whose
+--   residual would over-expose one party to a single counterparty — even though the
+--   plan is perfectly value-conserving. This is the beat that makes the ledger
+--   enforce a fintech's OWN risk constraint, not just accounting identity.
+--   Book: A owes B 100 (net: A pays B 100). FirmA set a self-limit of 50 owed to B.
+--   The only conserving plan is A->B 100 — which BREACHES the 50 cap -> rejected.
+testNettingRejectsCreditLimitBreach : Script ()
+testNettingRejectsCreditLimitBreach = do
+  w <- setupNetWorld
+  cashI <- submit w.bank do
+    createCmd Instrument with
+      depository = w.bank; issuer = w.bank; id = Id "USD"; version = "1"
+      holdingStandard = TransferableFungible; description = "USD"; observers = Set.empty
+  mkCashAccount w.bank w.firmA "A-cash"
+  mkCashAccount w.bank w.firmB "B-cash"
+  _ <- submit w.bank do createCmd SettlementAuthority with custodian = w.bank; coordinator = w.operator
+  auth <- findAuth w.bank w.operator
+
+  o1 <- mkObligation w.firmA w.firmB w.operator w.usd 100.0 "A->B 100"
+
+  -- FirmA accepts an on-ledger cap: it may owe FirmB at most 50 USD post-netting.
+  limit <- submitMulti [w.firmA, w.operator] [] do
+    createCmd CreditLimit with
+      operator = w.operator; from = w.firmA; to = w.firmB; currency = "USD"; limit = 50.0
+
+  let facts = [ NetTransfer w.firmA w.firmB 100.0 "USD" ]
+      leg = Leg with sender = w.firmA; receiver = w.firmB; custodian = w.bank; instrument = w.usd; amount = 100.0; senderAccountId = Id "A-cash"; receiverAccountId = Id "B-cash"
+  batch <- submit w.operator do
+    createCmd NettingBatch with
+      operator = w.operator; obligations = [o1]; obligationFacts = facts
+      residualLegs = [leg]; cashInstrument = w.usd; creditLimits = [limit]
+      parties = Set.fromList [w.firmA, w.firmB]
+      regulator = None; status = Pending
+
+  cash <- issueCash cashI w.bank w.firmA "A-cash" 100.0
+  locked <- submitMulti [w.bank, w.firmA] [] do
+    exerciseCmd cash LockHolding with locker = w.operator; context = "cl"
+  let allocs = [ AllocatedLeg with leg; holdingCid = locked; authorityCid = auth ]
+
+  -- MUST FAIL: the on-ledger credit-limit guard rejects the over-exposure
+  submitMultiMustFail (w.operator :: [w.firmA, w.firmB]) [] do
+    exerciseCmd batch SettleNetting with allocations = allocs
+
+  -- and the obligation is UNTOUCHED (atomic rollback): A still sees it
+  still <- queryContractId w.firmA o1
+  assertMsg "obligation must survive the rejected settle" (not (isNone still))
+
+  debug "testNettingRejectsCreditLimitBreach PASSED: on-ledger credit limit rejected the over-exposing plan; nothing settled"
   pure ()

@@ -21,6 +21,11 @@ newtype Id = Id Text
 instance Show Id where
   show (Id t) = t
 
+-- | Unwrap an `Id` to its underlying text (e.g. an instrument id "USD" used as a
+--   currency tag in the netting guards).
+unId : Id -> Text
+unId (Id t) = t
+
 -- | The holding standard categorises an instrument by the capabilities its holdings
 --   expose. Mirrors daml-finance's `HoldingStandard`.
 data HoldingStandard
