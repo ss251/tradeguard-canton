@@ -99,11 +99,11 @@ testThreePartyNetting = do
 
   let obls = [o1, o2, o3, o4, o5]
       facts =
-        [ NetTransfer w.firmA w.firmB 100.0 "USD"
-        , NetTransfer w.firmB w.firmC 100.0 "USD"
-        , NetTransfer w.firmC w.firmA 80.0 "USD"
-        , NetTransfer w.firmA w.firmC 50.0 "USD"
-        , NetTransfer w.firmC w.firmB 30.0 "USD" ]
+        [ NetTransfer w.firmA w.firmB 100.0 (Some "USD")
+        , NetTransfer w.firmB w.firmC 100.0 (Some "USD")
+        , NetTransfer w.firmC w.firmA 80.0 (Some "USD")
+        , NetTransfer w.firmA w.firmC 50.0 (Some "USD")
+        , NetTransfer w.firmC w.firmB 30.0 (Some "USD") ]
       -- agent-computed minimal residuals: A->C 40, A->B 30
       legAC = Leg with sender = w.firmA; receiver = w.firmC; custodian = w.bank; instrument = w.usd; amount = 40.0; senderAccountId = Id "A-cash"; receiverAccountId = Id "C-cash"
       legAB = Leg with sender = w.firmA; receiver = w.firmB; custodian = w.bank; instrument = w.usd; amount = 30.0; senderAccountId = Id "A-cash"; receiverAccountId = Id "B-cash"
@@ -113,7 +113,7 @@ testThreePartyNetting = do
   batch <- submit w.operator do
     createCmd NettingBatch with
       operator = w.operator; obligations = obls; obligationFacts = facts
-      residualLegs; cashInstrument = w.usd; creditLimits = []
+      residualLegs; cashInstrument = w.usd; creditLimits = Some []
       parties = Set.fromList [w.firmA, w.firmB, w.firmC]
       regulator = Some w.regulator; status = Pending
 
@@ -165,13 +165,13 @@ testNettingRejectsValueViolation = do
 
   o1 <- mkObligation w.firmA w.firmB w.operator w.usd 100.0 "A->B"
   -- net: A owes B 100. A FRAUDULENT proposal claims only 10 needs to move.
-  let facts = [ NetTransfer w.firmA w.firmB 100.0 "USD" ]
+  let facts = [ NetTransfer w.firmA w.firmB 100.0 (Some "USD") ]
       badLeg = Leg with sender = w.firmA; receiver = w.firmB; custodian = w.bank; instrument = w.usd; amount = 10.0; senderAccountId = Id "A-cash"; receiverAccountId = Id "B-cash"  -- under-settles by 90!
       badLegs = [ badLeg ]
   batch <- submit w.operator do
     createCmd NettingBatch with
       operator = w.operator; obligations = [o1]; obligationFacts = facts
-      residualLegs = badLegs; cashInstrument = w.usd; creditLimits = []
+      residualLegs = badLegs; cashInstrument = w.usd; creditLimits = Some []
       parties = Set.fromList [w.firmA, w.firmB]
       regulator = None; status = Pending
 
@@ -245,9 +245,9 @@ testMultiCurrencyNetting = do
 
   let obls = [oUsd1, oUsd2, oEur1]
       facts =
-        [ NetTransfer w.firmA w.firmB 100.0 "USD"
-        , NetTransfer w.firmB w.firmA 40.0  "USD"
-        , NetTransfer w.firmB w.firmA 50.0  "EUR" ]
+        [ NetTransfer w.firmA w.firmB 100.0 (Some "USD")
+        , NetTransfer w.firmB w.firmA 40.0  (Some "USD")
+        , NetTransfer w.firmB w.firmA 50.0  (Some "EUR") ]
       -- residuals: A pays B 60 USD ; B pays A 50 EUR
       legUsd = Leg with sender = w.firmA; receiver = w.firmB; custodian = w.bank; instrument = w.usd; amount = 60.0; senderAccountId = Id "A-cash"; receiverAccountId = Id "B-cash"
       legEur = Leg with sender = w.firmB; receiver = w.firmA; custodian = w.bank; instrument = eur; amount = 50.0; senderAccountId = Id "B-cash"; receiverAccountId = Id "A-cash"
@@ -256,7 +256,7 @@ testMultiCurrencyNetting = do
   batch <- submit w.operator do
     createCmd NettingBatch with
       operator = w.operator; obligations = obls; obligationFacts = facts
-      residualLegs; cashInstrument = w.usd; creditLimits = []
+      residualLegs; cashInstrument = w.usd; creditLimits = Some []
       parties = Set.fromList [w.firmA, w.firmB]
       regulator = Some w.regulator; status = Pending
 
@@ -306,12 +306,12 @@ testNettingRejectsCreditLimitBreach = do
     createCmd CreditLimit with
       operator = w.operator; from = w.firmA; to = w.firmB; currency = "USD"; limit = 50.0
 
-  let facts = [ NetTransfer w.firmA w.firmB 100.0 "USD" ]
+  let facts = [ NetTransfer w.firmA w.firmB 100.0 (Some "USD") ]
       leg = Leg with sender = w.firmA; receiver = w.firmB; custodian = w.bank; instrument = w.usd; amount = 100.0; senderAccountId = Id "A-cash"; receiverAccountId = Id "B-cash"
   batch <- submit w.operator do
     createCmd NettingBatch with
       operator = w.operator; obligations = [o1]; obligationFacts = facts
-      residualLegs = [leg]; cashInstrument = w.usd; creditLimits = [limit]
+      residualLegs = [leg]; cashInstrument = w.usd; creditLimits = Some [limit]
       parties = Set.fromList [w.firmA, w.firmB]
       regulator = None; status = Pending
 

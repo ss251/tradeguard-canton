@@ -273,12 +273,13 @@ def settle_real() -> dict:
     for party in involved:
         _ensure_account(parties, bank, party, ACC[short2key[party]])
 
-    # obligation cids + facts (NetTransfer encoding: sender/receiver/amount)
+    # obligation cids + facts (NetTransfer encoding: sender/receiver/amount/currency)
     op = RealLedgerClient(operator)
     obl_rows = op.query("TradeGuard.Netting:Obligation")
     obl_cids = [c["contractId"] for c in obl_rows]
     obl_facts = [{"sender": c["payload"]["payer"], "receiver": c["payload"]["payee"],
-                  "amount": c["payload"]["amount"]} for c in obl_rows]
+                  "amount": c["payload"]["amount"],
+                  "currency": c["payload"]["instrument"]["id"]["unpack"]} for c in obl_rows]
 
     legs, allocs = _residual_legs_and_allocs(parties, bank, operator, instr_cid, residuals, auth_cid)
 
@@ -286,7 +287,7 @@ def settle_real() -> dict:
     batch_payload = {
         "operator": operator, "obligations": obl_cids, "obligationFacts": obl_facts,
         "residualLegs": legs, "cashInstrument": _instr(bank),
-        "parties": _parties_set(sorted(involved)),
+        "parties": _parties_set(sorted(involved)), "creditLimits": [],
         "regulator": parties.get("netreg"), "status": "Pending"}
     r = op.create_tree("TradeGuard.Netting:NettingBatch", batch_payload)
     if _err(r):
@@ -325,7 +326,8 @@ def attempt_fraud() -> dict:
     obl_rows = op.query("TradeGuard.Netting:Obligation")
     obl_cids = [c["contractId"] for c in obl_rows]
     obl_facts = [{"sender": c["payload"]["payer"], "receiver": c["payload"]["payee"],
-                  "amount": c["payload"]["amount"]} for c in obl_rows]
+                  "amount": c["payload"]["amount"],
+                  "currency": c["payload"]["instrument"]["id"]["unpack"]} for c in obl_rows]
 
     instr_cid = _instrument_cid(parties, bank)
     auth_cid = _authority_cid(parties, bank, operator)
@@ -353,7 +355,7 @@ def attempt_fraud() -> dict:
     batch_payload = {
         "operator": operator, "obligations": obl_cids, "obligationFacts": obl_facts,
         "residualLegs": [leg], "cashInstrument": _instr(bank),
-        "parties": _parties_set(involved),
+        "parties": _parties_set(involved), "creditLimits": [],
         "regulator": parties.get("netreg"), "status": "Pending"}
     rb = op.create_tree("TradeGuard.Netting:NettingBatch", batch_payload)
     if _err(rb):
@@ -380,7 +382,91 @@ def attempt_fraud() -> dict:
             "warn": "ledger accepted the under-settlement (unexpected!)"}
 
 
+def attempt_credit_breach() -> dict:
+    """Phase-2 live beat: seed an on-ledger CreditLimit that the TRUE netted plan
+    breaches, then submit the conserving plan and show the ledger REJECT it on the
+    credit limit (not conservation). This proves the ledger enforces a fintech's own
+    risk constraint — the operator cannot settle around it even though the plan is
+    perfectly value-conserving.
+
+    The limit: cap the biggest net payer's residual to the biggest net receiver at
+    HALF of what's actually owed. The only conserving plan pays the full net, which
+    now breaches the on-ledger cap.
+    """
+    parties = load_real_parties()
+    bank = parties["netbank"]
+    operator = parties["operator"]
+    facts_raw = _book_facts(parties)
+    if not facts_raw:
+        return {"ok": False, "error": "seed a book first"}
+
+    op = RealLedgerClient(operator)
+    obl_rows = op.query("TradeGuard.Netting:Obligation")
+    obl_cids = [c["contractId"] for c in obl_rows]
+    obl_facts = [{"sender": c["payload"]["payer"], "receiver": c["payload"]["payee"],
+                  "amount": c["payload"]["amount"],
+                  "currency": c["payload"]["instrument"]["id"]["unpack"]} for c in obl_rows]
+
+    instr_cid = _instrument_cid(parties, bank)
+    auth_cid = _authority_cid(parties, bank, operator)
+    involved = sorted({p for (p, q, a) in facts_raw} | {q for (p, q, a) in facts_raw})
+    short2key = {parties[k]: k for k in _present_firms(parties)}
+    short2full = {_short(parties[k]): parties[k] for k in _present_firms(parties)}
+    for party in involved:
+        _ensure_account(parties, bank, party, ACC[short2key[party]])
+
+    # the true conserving residual plan (greedy is fine here — single currency)
+    obs = [Obligation(payer=_short(p), payee=_short(q), amount=a) for (p, q, a) in facts_raw]
+    residuals_short = minimal_settlement(obs)
+    if not residuals_short:
+        return {"ok": False, "error": "book nets to zero — no residual to cap"}
+    # pick the largest residual leg; cap it at half
+    big = max(residuals_short, key=lambda t: t.amount)
+    cap = round(big.amount / 2.0, 2)
+    from_p = short2full[big.sender]; to_p = short2full[big.receiver]
+
+    # seed the on-ledger CreditLimit (signatory from + operator, observer to)
+    cl = op.create_tree("TradeGuard.Netting:CreditLimit",
+                        {"operator": operator, "from": from_p, "to": to_p,
+                         "currency": "USD", "limit": cap},
+                        act_as=[from_p, operator])
+    if _err(cl):
+        return {"ok": False, "error": f"credit-limit create failed: {_err(cl)}"}
+    cl_cid = _tree_created_cid(cl, "TradeGuard.Netting:CreditLimit")
+
+    # build the full conserving plan + allocations
+    residuals = [(short2full[t.sender], short2full[t.receiver], t.amount) for t in residuals_short]
+    legs, allocs = _residual_legs_and_allocs(parties, bank, operator, instr_cid, residuals, auth_cid)
+
+    batch_payload = {
+        "operator": operator, "obligations": obl_cids, "obligationFacts": obl_facts,
+        "residualLegs": legs, "cashInstrument": _instr(bank),
+        "parties": _parties_set(involved), "creditLimits": [cl_cid],
+        "regulator": parties.get("netreg"), "status": "Pending"}
+    rb = op.create_tree("TradeGuard.Netting:NettingBatch", batch_payload)
+    if _err(rb):
+        return {"ok": False, "error": f"batch create failed: {_err(rb)}"}
+    batch_cid = _tree_created_cid(rb, "TradeGuard.Netting:NettingBatch")
+
+    actors = [operator] + involved
+    rs = op.exercise("TradeGuard.Netting:NettingBatch", batch_cid, "SettleNetting",
+                     {"allocations": allocs}, act_as=actors)
+    err = _err(rs)
+    if err:
+        import re
+        m = re.search(r"credit limit breached[^\"\\]*", err)
+        msg = m.group(0) if m else err
+        return {"ok": True, "rejected": True,
+                "constraint": f"{big.sender} -> {big.receiver} capped at {cap:.0f} "
+                              f"USD (true net owes {big.amount:.0f})",
+                "ledger_error": msg[:300]}
+    return {"ok": True, "rejected": False,
+            "warn": "ledger accepted a plan over the credit limit (unexpected!)"}
+
+
 if __name__ == "__main__":
     import json
     action = sys.argv[1] if len(sys.argv) > 1 else "settle"
-    print(json.dumps(settle_real() if action == "settle" else attempt_fraud(), indent=2))
+    fn = {"settle": settle_real, "fraud": attempt_fraud,
+          "limit": attempt_credit_breach}.get(action, settle_real)
+    print(json.dumps(fn(), indent=2))

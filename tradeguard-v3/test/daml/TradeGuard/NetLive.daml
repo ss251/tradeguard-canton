@@ -123,9 +123,9 @@ runNetLive = do
 
   let obls = [o1, o2, o3, o4, o5]
       facts =
-        [ NetTransfer firmA firmB 100.0 "USD", NetTransfer firmB firmC 100.0 "USD"
-        , NetTransfer firmC firmA 80.0 "USD", NetTransfer firmA firmC 50.0 "USD"
-        , NetTransfer firmC firmB 30.0 "USD" ]
+        [ NetTransfer firmA firmB 100.0 (Some "USD"), NetTransfer firmB firmC 100.0 (Some "USD")
+        , NetTransfer firmC firmA 80.0 (Some "USD"), NetTransfer firmA firmC 50.0 (Some "USD")
+        , NetTransfer firmC firmB 30.0 (Some "USD") ]
       -- agent-computed minimal residuals: A->C 40, A->B 30
       legAC = Leg with sender = firmA; receiver = firmC; custodian = bank; instrument = usd; amount = 40.0; senderAccountId = Id "A-cash"; receiverAccountId = Id "C-cash"
       legAB = Leg with sender = firmA; receiver = firmB; custodian = bank; instrument = usd; amount = 30.0; senderAccountId = Id "A-cash"; receiverAccountId = Id "B-cash"
@@ -133,7 +133,7 @@ runNetLive = do
   batch <- submit operator do
     createCmd NettingBatch with
       operator; obligations = obls; obligationFacts = facts
-      residualLegs = [legAC, legAB]; cashInstrument = usd; creditLimits = []
+      residualLegs = [legAC, legAB]; cashInstrument = usd; creditLimits = Some []
       parties = Set.fromList [firmA, firmB, firmC]
       regulator = Some regulator; status = Pending
 
@@ -173,7 +173,7 @@ settleSeededBook = do
   -- find the existing obligations the operator can see (the seeded book)
   obRows <- query @Obligation operator
   let obls  = map fst obRows
-      facts = map (\(_, o) -> NetTransfer o.payer o.payee o.amount (unId o.instrument.id)) obRows
+      facts = map (\(_, o) -> NetTransfer o.payer o.payee o.amount (Some (unId o.instrument.id))) obRows
   assertMsg "no seeded book to settle" (not (null obls))
 
   -- register USD + accounts (idempotent)
@@ -219,7 +219,7 @@ settleSeededBook = do
   batch <- submit operator do
     createCmd NettingBatch with
       operator; obligations = obls; obligationFacts = facts
-      residualLegs = [legAC, legAB]; cashInstrument = usd; creditLimits = []
+      residualLegs = [legAC, legAB]; cashInstrument = usd; creditLimits = Some []
       parties = Set.fromList [firmA, firmB, firmC]
       regulator = Some regulator; status = Pending
 
