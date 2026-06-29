@@ -10,3 +10,4 @@ tradeguard/log/
 agent/__pycache__/
 tradeguard-v3/**/.daml/
 tradeguard-v3/**/*.dar
+.venv/
