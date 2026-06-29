@@ -238,9 +238,14 @@ def seed_book(dense: bool = True) -> dict:
             created += 1
     return {"ok": created == len(book), "created": created, "total": len(book)}
 
+def settle_real(policy_text: str | None = None) -> dict:
+    """Settle the existing seeded book atomically via v2 using the CONSTRAINED SOLVER.
 
-def settle_real() -> dict:
-    """Settle the existing seeded book atomically via v2. Fast (~2-3s)."""
+    The plan is computed by agent.solver under the SAME on-ledger CreditLimits the
+    ledger enforces (single source of truth), optionally steered by a natural-language
+    policy. If the constraints make settlement infeasible, returns the binding
+    constraint instead of forcing a settle. Fast (~2-3s) when feasible.
+    """
     parties = load_real_parties()
     bank = parties["netbank"]
     operator = parties["operator"]
@@ -248,13 +253,40 @@ def settle_real() -> dict:
     if not facts_raw:
         return {"ok": False, "error": "no seeded book to settle"}
 
-    # compute the net + minimal residuals (off-chain agent brain)
-    obs = [Obligation(payer=_short(p), payee=_short(q), amount=a) for (p, q, a) in facts_raw]
-    residuals_short = minimal_settlement(obs)
-
-    # map short names back to full party ids
     short2full = {_short(parties[k]): parties[k] for k in _present_firms(parties)}
-    residuals = [(short2full[t.sender], short2full[t.receiver], t.amount) for t in residuals_short]
+
+    # the off-chain brain: solver under the live on-ledger limits + optional policy
+    from agent.solver import solve, Obligation as SObl
+    from agent import limits as limmod
+    ledger_limits = limmod.load_limits(parties)
+    solver_limits = limmod.to_solver_limits(ledger_limits)
+
+    weights: dict = {}
+    policy_info = None
+    if policy_text:
+        from agent.policy import PolicyContext, parse_policy
+        ctx = PolicyContext(parties=sorted(short2full.keys()),
+                            currencies=sorted({f[2] if len(f) > 3 else "USD" for f in []} | {"USD"}))
+        pol = parse_policy(policy_text, ctx)
+        policy_info = pol.to_dict()
+        if not pol.valid:
+            return {"ok": False, "error": "invalid policy", "policy": policy_info}
+        weights, pol_limits = pol.to_solver_inputs()
+        # policy-declared limits augment the on-ledger ones for PLANNING (the ledger
+        # still only enforces what's actually been seeded on-chain).
+        solver_limits = solver_limits + pol_limits
+
+    obs = [SObl(payer=_short(p), payee=_short(q), amount=a, instrument="USD")
+           for (p, q, a) in facts_raw]
+    plan = solve(obs, solver_limits, weights)
+    if not plan.feasible:
+        return {"ok": False, "infeasible": True,
+                "binding_constraints": plan.binding_constraints,
+                "rationale": plan.rationale,
+                "policy": policy_info}
+
+    residuals = [(short2full[t.sender], short2full[t.receiver], t.amount)
+                 for t in plan.transfers]
 
     instr_cid = _instrument_cid(parties, bank)
     if not instr_cid:
@@ -269,6 +301,7 @@ def settle_real() -> dict:
     involved = set()
     for (p, q, a) in facts_raw:
         involved.add(p); involved.add(q)
+
     short2key = {parties[k]: k for k in _present_firms(parties)}
     for party in involved:
         _ensure_account(parties, bank, party, ACC[short2key[party]])
@@ -283,11 +316,14 @@ def settle_real() -> dict:
 
     legs, allocs = _residual_legs_and_allocs(parties, bank, operator, instr_cid, residuals, auth_cid)
 
-    firm_parties = [short2full[s] for s in short2full]
+    # carry the SAME on-ledger limit cids into the batch -> the SettleNetting guard
+    # re-checks the plan the solver already respected (defense in depth).
+    cl_cids = limmod.limit_cids(ledger_limits)
     batch_payload = {
         "operator": operator, "obligations": obl_cids, "obligationFacts": obl_facts,
         "residualLegs": legs, "cashInstrument": _instr(bank),
-        "parties": _parties_set(sorted(involved)), "creditLimits": [],
+        "parties": _parties_set(sorted(involved)),
+        "creditLimits": (cl_cids if cl_cids else None),
         "regulator": parties.get("netreg"), "status": "Pending"}
     r = op.create_tree("TradeGuard.Netting:NettingBatch", batch_payload)
     if _err(r):
@@ -302,9 +338,12 @@ def settle_real() -> dict:
     if e:
         return {"ok": False, "error": f"settle failed: {e}"}
     gross = round(sum(a for (_, _, a) in facts_raw), 2)
-    net = round(sum(t.amount for t in residuals_short), 2)
+    net = round(sum(t.amount for t in plan.transfers), 2)
     return {"ok": True, "gross": gross, "net": net,
-            "discharged": len(obl_cids), "residuals": len(residuals)}
+            "discharged": len(obl_cids), "residuals": len(residuals),
+            "efficiency_pct": plan.netting_efficiency_pct,
+            "credit_limits_enforced": len(cl_cids),
+            "policy": policy_info}
 
 
 def attempt_fraud() -> dict:

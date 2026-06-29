@@ -161,7 +161,27 @@
 
     <!-- RIGHT: privacy + status -->
     <div>
-      <div class="card">
+      <div class="card" style="margin-top:18px">
+        <h3>Risk Policy <span class="tag">natural language → solver</span></h3>
+        <div style="font-family:var(--mono);font-size:.82rem;color:var(--ink2);margin-bottom:8px">A risk officer steers the netting in plain English. The LLM only emits validated constraints; the solver and the on-ledger guards do the real work and can't be talked past.</div>
+        <input id="policyin" placeholder="e.g. cap what FirmA owes FirmC at 20 USD" style="width:100%;padding:9px 11px;font-family:var(--mono);font-size:.85rem;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--ink)" />
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="ghost" onclick="applyPolicy()" style="flex:1">Apply policy</button>
+          <button class="ghost" onclick="clearPolicy()">Clear</button>
+        </div>
+        <div class="banner" id="policybanner" style="display:none"></div>
+      </div>
+
+      <div class="card" style="margin-top:18px">
+        <h3>On-ledger Credit Limits <span class="tag">enforced by the ledger</span></h3>
+        <div id="limitslist" style="font-family:var(--mono);font-size:.86rem;line-height:1.8;color:var(--ink2)">— none set —</div>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <button class="ghost" onclick="seedDemoLimit()">Seed FirmA→FirmC ≤ 20 USD</button>
+          <button class="ghost" onclick="clearLimits()">Clear limits</button>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:18px">
         <h3>Privacy — who sees the book <span class="tag">live, per party</span></h3>
         <div id="privacy"></div>
         <div class="privnote">The operator sees the whole book to compute the net; every firm sees only its own obligations; the ledger itself rejects any under-settlement. <b>No trusted compute, no full-book disclosure — privacy is what makes safe netting possible.</b> Click a row to see refs.</div>
@@ -181,6 +201,7 @@
         <button id="b_compute" onclick="doCompute()" disabled>Compute net</button>
         <button id="b_settle" class="green" onclick="openGate()" disabled>Approve &amp; settle</button>
         <button id="b_adv" class="ox" onclick="doAdversarial()">Test: reject fraud</button>
+        <button id="b_breach" class="ox" onclick="doCreditBreach()">Test: reject credit breach</button>
         <button class="ghost" onclick="refresh()">↻</button>
       </div>
     </div>
@@ -244,6 +265,7 @@ function render(st){
   // status
   $('#s_batches').textContent=st.open_batches;
   $('#s_settled').textContent=(st.residual_holdings!=null?st.residual_holdings:st.settled_count);
+  renderLimits(st);
   // plan
   if(st.plan && COMPUTED){ renderPlan(st.plan); }
   // pipeline + button enablement
@@ -258,14 +280,38 @@ function render(st){
 
 function renderPlan(plan){
   $('#plancard').style.display='block';
-  $('#netpos').innerHTML=Object.entries(plan.net_positions).map(([p,v])=>{
+  // net positions: solver returns {currency: {party: net}}; flatten across currencies
+  const flat={};
+  if(plan.net_positions){
+    for(const ccy in plan.net_positions){
+      for(const [p,v] of Object.entries(plan.net_positions[ccy])){ flat[p]=(flat[p]||0)+v; }
+    }
+  }
+  $('#netpos').innerHTML=Object.entries(flat).map(([p,v])=>{
     const cls=v<0?'pay':(v>0?'rec':''); const sign=v>0?'+':'';
     return `<div class="pos ${cls}">${p} ${sign}${v.toFixed(0)}</div>`;}).join('');
+
+  if(plan.feasible===false){
+    // INFEASIBLE under the constraints — show the binding constraint as a feature
+    $('#residuals').innerHTML='<div class="banner rej" style="display:block">⃠ NO FEASIBLE SETTLEMENT under the current credit limits — '+
+      (plan.binding_constraints||[]).join('; ')+'</div>';
+    $('#g_gross').textContent=plan.gross_obligations.toFixed(0);
+    $('#g_net').textContent='—'; $('#g_pct').textContent='infeasible';
+    $('#b_settle').disabled=true;
+    return;
+  }
   $('#residuals').innerHTML=plan.residual_transfers.map(t=>
-    `<div class="resid">${t.sender} <span class="arrow">→</span> ${t.receiver} &nbsp;<b>${t.amount.toFixed(0)} USD</b></div>`).join('');
-  $('#g_gross').textContent=plan.gross_value.toFixed(0);
-  $('#g_net').textContent=plan.net_value.toFixed(0);
+    `<div class="resid">${t.sender} <span class="arrow">→</span> ${t.receiver} &nbsp;<b>${t.amount.toFixed(0)} ${t.currency||'USD'}</b></div>`).join('');
+  $('#g_gross').textContent=plan.gross_obligations.toFixed(0);
+  $('#g_net').textContent=plan.gross_residual.toFixed(0);
   $('#g_pct').textContent=plan.netting_efficiency_pct+'%';
+}
+
+function renderLimits(st){
+  const el=$('#limitslist'); const lims=st.credit_limits||[];
+  el.innerHTML = lims.length
+    ? lims.map(l=>`<div>${l.from} → ${l.to} &nbsp;<b>≤ ${l.limit.toFixed(0)} ${l.currency}</b></div>`).join('')
+    : '— none set —';
 }
 
 function banner(kind,msg){const b=$('#banner');b.className='banner '+kind;b.textContent=msg;}
@@ -296,19 +342,63 @@ async function doCompute(){
 function openGate(){
   if(!STATE||!STATE.plan)return;
   const p=STATE.plan;
+  if(p.feasible===false){ toast('plan is infeasible under the current limits',true); return; }
   $('#gatedet').className='det';
-  $('#gatedet').innerHTML=`net ${p.gross_value.toFixed(0)} → ${p.net_value.toFixed(0)} USD · `+
+  $('#gatedet').innerHTML=`net ${p.gross_obligations.toFixed(0)} → ${p.gross_residual.toFixed(0)} USD · `+
     p.residual_transfers.map(t=>`${t.sender}→${t.receiver} ${t.amount.toFixed(0)}`).join(' · ');
   $('#gatedet').style.display='block';
   $('#gate').classList.add('on');
 }
 function closeGate(){$('#gate').classList.remove('on');}
+
+let POLICY='';
 async function doSettle(){
   closeGate(); busy('#b_settle',true,'settling');
-  try{const r=await fetch('/api/console/settle',{method:'POST'});const d=await r.json();
-    COMPUTED=false; JUST_SETTLED=d.ok; render(d.state);
-    if(d.ok) toast('✓ Settled atomically on-ledger'); else toast('settle failed',true);}
+  try{const r=await fetch('/api/console/settle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({policy:POLICY})});const d=await r.json();
+    if(d.infeasible){ COMPUTED=true; render(d.state);
+      toast('infeasible under limits — not settled',true); }
+    else { COMPUTED=false; JUST_SETTLED=d.ok; render(d.state);
+      if(d.ok) toast('✓ Settled atomically on-ledger'+(d.credit_limits_enforced?` (${d.credit_limits_enforced} limit(s) enforced)`:'')); else toast('settle failed',true); }}
   catch(e){toast('settle error',true);} finally{busy('#b_settle',false);}
+}
+
+async function applyPolicy(){
+  POLICY=$('#policyin').value.trim();
+  if(!POLICY){ toast('type a policy first',true); return; }
+  busy('#b_compute',true,'applying policy');
+  try{const r=await fetch('/api/console/policy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({policy:POLICY})});
+    const d=await r.json(); COMPUTED=true;
+    const pol=d.policy; const pb=$('#policybanner'); pb.style.display='block';
+    if(pol && pol.valid){ pb.className='banner ok'; pb.textContent='✓ '+pol.source+': '+pol.interpretation; }
+    else { pb.className='banner rej'; pb.textContent='✗ invalid policy — '+((pol&&pol.errors&&pol.errors[0])||'could not interpret'); }
+    render(d.state);
+  }catch(e){toast('policy error',true);} finally{busy('#b_compute',false);}
+}
+function clearPolicy(){ POLICY=''; $('#policyin').value=''; $('#policybanner').style.display='none';
+  COMPUTED=true; refresh(); toast('policy cleared'); }
+
+async function seedDemoLimit(){
+  try{const r=await fetch('/api/console/limits',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:'firma',to:'firmc',limit:20,currency:'USD'})});
+    const d=await r.json(); render(d.state); toast(d.ok?'On-ledger credit limit seeded ✓':'seed failed',!d.ok);
+  }catch(e){toast('limit error',true);}
+}
+async function clearLimits(){
+  try{const r=await fetch('/api/console/limits/clear',{method:'POST'});const d=await r.json();
+    render(d.state); toast('Credit limits cleared ('+d.cleared+')');}
+  catch(e){toast('clear error',true);}
+}
+
+async function doCreditBreach(){
+  busy('#b_breach',true,'submitting breach to ledger');
+  try{const r=await fetch('/api/console/credit-breach',{method:'POST'});const d=await r.json();
+    if(d.rejected){
+      banner('rej','⃠ REJECTED BY THE LEDGER — '+(d.constraint||'credit limit breach')+
+        '. On-chain guard: "'+(d.ledger_error||'credit limit breached')+'"');
+      toast('Ledger rejected the credit breach ✓');
+    } else if(d.error){ banner('rej','error: '+d.error); toast('error',true); }
+    else { toast('unexpected: not rejected',true); }
+    if(d.state) render(d.state);
+  }catch(e){toast('credit-breach error',true);} finally{busy('#b_breach',false);}
 }
 async function doAdversarial(){
   busy('#b_adv',true,'submitting fraud to ledger');

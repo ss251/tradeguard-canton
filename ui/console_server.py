@@ -33,8 +33,11 @@ PROJECT = os.path.dirname(HERE)
 sys.path.insert(0, PROJECT)
 
 from agent.real_client import RealLedgerClient, load_real_parties, admin_token  # noqa: E402
-from agent.netting import Obligation, netting_report  # noqa: E402
+from agent.netting import Obligation  # noqa: E402
+from agent.solver import solve, Obligation as SolverObligation  # noqa: E402
 from agent import net_settle  # noqa: E402  (instant v2 settle + live fraud rejection)
+from agent import limits as limmod  # noqa: E402  (on-ledger credit-limit lifecycle)
+from agent.policy import PolicyContext, parse_policy  # noqa: E402
 
 V3_TEST = os.path.join(PROJECT, "tradeguard-v3", "test")
 DAR = os.path.join(V3_TEST, ".daml", "dist", "tradeguard-test-1.0.0.dar")
@@ -91,9 +94,48 @@ def _obligations_for(party_key: str, parties: dict) -> list[dict]:
     return out
 
 
-def build_state() -> dict:
+def _solver_plan(book: list[dict], parties: dict, policy_text: str | None = None) -> dict | None:
+    """Run the constrained solver over the book under the LIVE on-ledger limits
+    (+ optional NL policy). Returns a JSON-serializable plan, or None if no book."""
+    if not book:
+        return None
+    ledger_limits = limmod.load_limits(parties)
+    solver_limits = limmod.to_solver_limits(ledger_limits)
+    weights: dict = {}
+    policy_info = None
+    if policy_text:
+        short_names = sorted({o["payer"] for o in book} | {o["payee"] for o in book})
+        ctx = PolicyContext(parties=short_names, currencies=["USD"])
+        pol = parse_policy(policy_text, ctx)
+        policy_info = pol.to_dict()
+        if pol.valid:
+            weights, pol_limits = pol.to_solver_inputs()
+            solver_limits = solver_limits + pol_limits
+    obs = [SolverObligation(payer=o["payer"], payee=o["payee"], amount=o["amount"],
+                            instrument="USD") for o in book]
+    r = solve(obs, solver_limits, weights)
+    out = {
+        "feasible": r.feasible,
+        "gross_obligations": r.gross_obligations,
+        "gross_residual": r.gross_residual,
+        "netting_efficiency_pct": r.netting_efficiency_pct,
+        "net_positions": r.net_positions,
+        "residual_transfers": [
+            {"sender": t.sender, "receiver": t.receiver, "amount": t.amount,
+             "currency": t.currency} for t in r.transfers],
+        "residual_count": len(r.transfers),
+        "binding_constraints": r.binding_constraints,
+        "rationale": r.rationale,
+        "credit_limits": [l.short() for l in ledger_limits],
+        "policy": policy_info,
+    }
+    return out
+
+
+def build_state(policy_text: str | None = None) -> dict:
     """The full console state: the operator's book, the per-party privacy panel,
-    the agent's computed net (if a book exists), and settlement status."""
+    the agent's CONSTRAINED plan (solver under live on-ledger limits), on-ledger
+    credit limits, and settlement status."""
     parties = load_real_parties()
     # operator sees the whole book — that's the canonical book
     book = _obligations_for("operator", parties)
@@ -105,14 +147,15 @@ def build_state() -> dict:
         privacy.append({"key": key, "label": label, "count": len(obls),
                         "refs": [o["ref"] for o in obls]})
 
-    # the agent's net (off-chain brain) over the operator's book
-    plan = None
-    if book:
-        obs = [Obligation(payer=o["payer"], payee=o["payee"], amount=o["amount"]) for o in book]
-        plan = netting_report(obs)
+    # the agent's plan: the CONSTRAINED solver over the operator's book under the
+    # live on-ledger credit limits (+ optional policy steering)
+    plan = _solver_plan(book, parties, policy_text)
 
-    # settlement status (operator's view). After settleSeededBook the obligations
-    # are discharged (book -> 0) and residual cash holdings exist at the firms.
+    # on-ledger credit limits (the live risk constraints)
+    ledger_limits = limmod.load_limits(parties)
+
+    # settlement status (operator's view). After settle the obligations are
+    # discharged (book -> 0) and residual cash holdings exist at the firms.
     op = RealLedgerClient(parties["operator"])
     settled = op.query(SETTLED_T)
     batches = op.query(BATCH_T)
@@ -124,6 +167,9 @@ def build_state() -> dict:
         "book_size": len(book),
         "privacy": privacy,
         "plan": plan,
+        "credit_limits": [
+            {"from": l.frm.split("::")[0], "to": l.to.split("::")[0],
+             "currency": l.currency, "limit": l.limit} for l in ledger_limits],
         "settled_count": len(settled),
         "open_batches": len(batches),
         "residual_holdings": firm_holdings,
@@ -159,26 +205,62 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, {"error": "not found"})
 
+    def _read_body(self) -> dict:
+        try:
+            n = int(self.headers.get("Content-Length", 0))
+            if n <= 0:
+                return {}
+            return json.loads(self.rfile.read(n).decode() or "{}")
+        except (ValueError, json.JSONDecodeError):
+            return {}
+
     def do_POST(self):
         u = urlparse(self.path)
         try:
+            body = self._read_body()
+            policy_text = (body.get("policy") or "").strip() or None
+
             if u.path == "/api/console/seed":
                 # create a dense 12-obligation book via instant v2 creates
                 res = net_settle.seed_book(dense=True)
                 res["state"] = build_state()
                 self._send(200, res)
             elif u.path == "/api/console/compute":
-                # pure read + off-chain net; no ledger write
-                self._send(200, {"ok": True, "state": build_state()})
+                # pure read + CONSTRAINED solver plan (no ledger write); policy-aware
+                self._send(200, {"ok": True, "state": build_state(policy_text)})
+            elif u.path == "/api/console/policy":
+                # parse a NL policy and show the resulting plan (no write)
+                state = build_state(policy_text)
+                plan = state.get("plan") or {}
+                self._send(200, {"ok": True, "policy": plan.get("policy"),
+                                 "state": state})
+            elif u.path == "/api/console/limits":
+                # seed an on-ledger CreditLimit: {from,to,limit,currency}
+                res = limmod.seed_limit(
+                    body.get("from", "firma"), body.get("to", "firmc"),
+                    float(body.get("limit", 20.0)), body.get("currency", "USD"))
+                res["state"] = build_state()
+                self._send(200, res)
+            elif u.path == "/api/console/limits/clear":
+                res = limmod.clear_limits()
+                res["state"] = build_state()
+                self._send(200, res)
             elif u.path == "/api/console/settle":
-                # human-approved atomic settle via the instant v2 client (~2-3s)
-                res = net_settle.settle_real()
+                # human-approved atomic settle via the constrained solver under the
+                # live on-ledger limits (~2-3s); policy-aware. Infeasible => no settle.
+                res = net_settle.settle_real(policy_text)
                 res["state"] = build_state()
                 self._send(200, res)
             elif u.path == "/api/console/adversarial":
                 # submit a REAL fraudulent NettingBatch to the LIVE ledger; the
                 # on-ledger conservation guard rejects it (returns the actual error)
                 res = net_settle.attempt_fraud()
+                res["state"] = build_state()
+                self._send(200, res)
+            elif u.path == "/api/console/credit-breach":
+                # seed an on-ledger CreditLimit the true plan breaches, submit the
+                # conserving plan, show the ledger reject it on the credit limit
+                res = net_settle.attempt_credit_breach()
                 res["state"] = build_state()
                 self._send(200, res)
             else:
