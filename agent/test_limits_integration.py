@@ -57,9 +57,61 @@ def test_ledger_limits_drive_solver():
     print("test_ledger_limits_drive_solver PASSED — cleanup OK")
 
 
+def test_fx_lifecycle_live():
+    """Seed a co-signed FXRate, load it, confirm the solver values the cross-currency
+    book at that exact on-ledger rate, then clear it."""
+    from agent.limits import (seed_fx_rate, load_fx_rates, clear_fx_rates, fx_triples)
+    from agent.solver import solve_fx, FXRate
+    clear_fx_rates()
+    seed_fx_rate("EUR", "USD", 1.2, ["firma", "firmb", "firmc"])
+    rates = load_fx_rates()
+    assert len(rates) == 1, f"expected 1 on-ledger rate, got {len(rates)}"
+    assert rates[0].base == "EUR" and rates[0].quote == "USD" and rates[0].rate == 1.2
+    # the co-signers must include all three firms
+    assert len([p for p in rates[0].parties]) >= 3, rates[0].parties
+
+    solver_rates = [FXRate(b, q, r) for (b, q, r) in fx_triples(rates)]
+    book = [Obligation("FirmA", "FirmB", 100.0, "USD"),
+            Obligation("FirmB", "FirmA", 50.0, "EUR")]
+    r = solve_fx(book, solver_rates, settle_ccy="USD")
+    assert r.feasible, r.binding_constraints
+    # A owes B 100 USD; B owes A 50 EUR = 60 USD -> net A->B 40 USD
+    assert len(r.transfers) == 1 and abs(r.transfers[0].amount - 40.0) < 0.01, r.transfers
+    print(f"test_fx_lifecycle_live PASSED — on-ledger rate 1 EUR=1.2 USD drives solver to A->B 40 USD")
+    clear_fx_rates()
+    assert load_fx_rates() == [], "fx rates should be cleared"
+    print("test_fx_lifecycle_live PASSED — cleanup OK")
+
+
+def test_liquidity_floor_lifecycle_live():
+    """Seed an on-ledger LiquidityFloor, load it, confirm the solver enforces it."""
+    from agent.limits import (seed_liquidity_floor, load_liquidity_floors,
+                              clear_liquidity_floors)
+    from agent.solver import solve_fx, FXRate, FloorConstraint
+    clear_liquidity_floors()
+    seed_liquidity_floor("firma", 50.0, "USD")
+    floors = load_liquidity_floors()
+    assert len(floors) == 1 and floors[0].floor == 50.0 and floors[0].currency == "USD"
+    fc = [FloorConstraint(_short(f.party), f.currency, f.floor) for f in floors]
+
+    # FirmA owes 100, holds 120 -> post 20 < 50 floor -> infeasible
+    book = [Obligation("FirmA", "FirmB", 100.0, "USD")]
+    rates = [FXRate("EUR", "USD", 1.2)]
+    r = solve_fx(book, rates, settle_ccy="USD", floors=fc,
+                 balances={("FirmA", "USD"): 120.0})
+    assert not r.feasible, "floor breach must be infeasible"
+    assert any("floor" in b.lower() for b in r.binding_constraints), r.binding_constraints
+    print(f"test_liquidity_floor_lifecycle_live PASSED — {r.binding_constraints[0]}")
+    clear_liquidity_floors()
+    assert load_liquidity_floors() == [], "floors should be cleared"
+    print("test_liquidity_floor_lifecycle_live PASSED — cleanup OK")
+
+
 if __name__ == "__main__":
     if os.environ.get("TG_INTEG") != "1":
         print("SKIPPED: set TG_INTEG=1 and TG_REAL=1 to run the live integration test")
         sys.exit(0)
     test_ledger_limits_drive_solver()
+    test_fx_lifecycle_live()
+    test_liquidity_floor_lifecycle_live()
     print("\nALL LIMITS INTEGRATION TESTS PASSED")
