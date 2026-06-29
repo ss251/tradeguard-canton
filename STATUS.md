@@ -84,3 +84,25 @@ open http://localhost:8080
     OUTSIDER sees nothing (0/0/0).
 - RUN real net: TG_REAL=1 python3 -m agent.cli status|watch --once|approve TG-LIVE-001
 - Remaining: settle orchestration on real net (auth'd Daml Script, same pattern as seed).
+
+## UPDATE 2026-06-29 ~16:30 — PHASE 2 LIVE: MULTI-CURRENCY + ON-LEDGER CREDIT LIMITS ✅
+Pivot thesis (competing fintechs/neobanks) now backed by REAL code on the REAL network.
+- **Daml (tradeguard 1.2.0, deployed to :3975 + :2975, HTTP 200):**
+  - `NetTransfer` gained `currency` (Optional, for Canton SCU upgrade-compat); conservation
+    + efficiency guards now checked INDEPENDENTLY PER CURRENCY (USD residual never offsets EUR).
+  - New `CreditLimit` template (signatory from+operator, observer to) = a fintech's own
+    on-ledger exposure cap. `NettingBatch.creditLimits` (Optional, LAST field for SCU);
+    `SettleNetting` rejects any plan that breaches a cap — the operator can't settle around it.
+  - 16 Daml tests green (added testMultiCurrencyNetting, testNettingRejectsCreditLimitBreach).
+  - SCU gotchas hit + fixed: new fields must be Optional AND appended at the record end.
+- **Solver (agent/solver.py, PuLP/CBC, 6 tests):** real LP per currency; unconstrained
+  reproduces 360->70 (80.6%); a binding limit forces a genuine REROUTE; INFEASIBLE returns
+  the binding constraint ("C owed 40 but capped at 20"); objective_weights = LLM policy hook.
+- **VERIFIED LIVE on the 3-validator network:**
+  - settle: 5 obligations (360) -> 2 residuals (70), atomic;
+  - LIVE credit-limit reject: FirmA->FirmC capped 20 USD rejects the 40-owed plan
+    ("credit limit breached: FirmA -> FirmC in USD");
+  - LIVE per-currency conservation reject ("conserve value ... in USD").
+- Commits: c5be431 (ledger) · 5c06ced (solver) · 703921c (live deploy). Deck reframed live
+  to the neobank thesis (9694e80). NOT YET DONE: LLM policy layer (agent/policy.py), console
+  wiring for the credit-limit beat, FX rates (all roadmap, clearly labeled).
