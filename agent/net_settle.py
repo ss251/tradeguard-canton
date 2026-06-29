@@ -44,6 +44,31 @@ def _instr(bank: str) -> dict:
             "version": "1", "holdingStandard": "TransferableFungible"}
 
 
+def _instr_ccy(bank: str, ccy: str) -> dict:
+    """Instrument key for an arbitrary currency (USD, EUR, ...)."""
+    return {"depository": bank, "issuer": bank, "id": _id(ccy),
+            "version": "1", "holdingStandard": "TransferableFungible"}
+
+
+def _instrument_cid_ccy(parties: dict, bank: str, ccy: str) -> str:
+    """Get-or-create the Instrument for `ccy`; return its cid."""
+    bankc = RealLedgerClient(bank)
+    for i in bankc.query("TradeGuard.Instrument:Instrument"):
+        if i["payload"]["id"]["unpack"] == ccy:
+            return i["contractId"]
+    r = bankc.create_tree("TradeGuard.Instrument:Instrument",
+                          {"depository": bank, "issuer": bank, "id": _id(ccy),
+                           "version": "1", "holdingStandard": "TransferableFungible",
+                           "description": ccy, "observers": _parties_set([])})
+    return _tree_created_cid(r, "TradeGuard.Instrument:Instrument")
+
+
+def _leg_ccy(sender, receiver, bank, amount, s_acc, r_acc, ccy) -> dict:
+    return {"sender": sender, "receiver": receiver, "custodian": bank,
+            "instrument": _instr_ccy(bank, ccy), "amount": amount,
+            "senderAccountId": _id(s_acc), "receiverAccountId": _id(r_acc)}
+
+
 def _err(resp: dict) -> str | None:
     if isinstance(resp, dict) and "_http_error" in resp:
         return resp.get("_body", "")[:400]
@@ -503,9 +528,139 @@ def attempt_credit_breach() -> dict:
             "warn": "ledger accepted a plan over the credit limit (unexpected!)"}
 
 
+def seed_fx_book() -> dict:
+    """Seed a 2-currency (USD+EUR) obligation book + a co-signed FX rate on the live
+    ledger, for the cross-currency netting demo. Clears any existing book/rate first.
+    Book:  A owes B 100 USD ; B owes A 50 EUR ; A owes C 60 EUR ; C owes B 40 USD.
+    """
+    from agent import limits as limmod
+    parties = load_real_parties()
+    op = RealLedgerClient(parties["operator"])
+    # clear existing obligations, batches, fx rates
+    for c in op.query("TradeGuard.Netting:Obligation"):
+        op.exercise("TradeGuard.Netting:Obligation", c["contractId"], "Discharge", {})
+    for c in op.query("TradeGuard.Netting:NettingBatch"):
+        op.exercise("TradeGuard.Netting:NettingBatch", c["contractId"], "CancelNetting",
+                    {"actor": parties["operator"]})
+    limmod.clear_fx_rates(parties)
+
+    bank = parties["netbank"]
+    opp = parties["operator"]
+    A, B, C = parties["firma"], parties["firmb"], parties["firmc"]
+    # ensure both instruments exist
+    _instrument_cid_ccy(parties, bank, "USD")
+    _instrument_cid_ccy(parties, bank, "EUR")
+
+    book = [
+        (A, B, 100.0, "USD", "A->B 100 USD"),
+        (B, A, 50.0, "EUR", "B->A 50 EUR"),
+        (A, C, 60.0, "EUR", "A->C 60 EUR"),
+        (C, B, 40.0, "USD", "C->B 40 USD"),
+    ]
+    created = 0
+    for payer, payee, amt, ccy, ref in book:
+        r = RealLedgerClient(payer).create(
+            "TradeGuard.Netting:Obligation",
+            {"payer": payer, "payee": payee, "operator": opp,
+             "instrument": _instr_ccy(bank, ccy), "amount": amt, "reference": ref},
+            act_as=[payer, payee])
+        if not _err(r):
+            created += 1
+
+    # co-signed FX rate: 1 EUR = 1.2 USD, agreed by all three firms + operator
+    fx = limmod.seed_fx_rate("EUR", "USD", 1.2, ["firma", "firmb", "firmc"], parties)
+    return {"ok": created == len(book) and fx.get("ok"), "created": created,
+            "total": len(book), "fx_rate": fx.get("base", "") and f"1 EUR = 1.2 USD"}
+
+
+def settle_cross_currency() -> dict:
+    """Settle the 2-currency book by VALUE at the co-signed FX rate, on the live net.
+
+    Values every party's USD+EUR net into USD at the agreed rate, computes residuals
+    in USD via the solver, and settles atomically with the on-ledger FXRate carried in
+    the batch (so the value-conservation guard enforces the same rate). This is
+    trustless cross-currency netting: the rate was signed by every party.
+    """
+    from agent import limits as limmod
+    from agent.solver import solve_fx, FXRate, Obligation as SObl
+    parties = load_real_parties()
+    bank = parties["netbank"]
+    operator = parties["operator"]
+
+    op = RealLedgerClient(operator)
+    obl_rows = op.query("TradeGuard.Netting:Obligation")
+    if not obl_rows:
+        return {"ok": False, "error": "seed the FX book first (seed_fx_book)"}
+    facts_raw = [(c["payload"]["payer"], c["payload"]["payee"],
+                  float(c["payload"]["amount"]),
+                  c["payload"]["instrument"]["id"]["unpack"]) for c in obl_rows]
+    obl_cids = [c["contractId"] for c in obl_rows]
+    obl_facts = [{"sender": p, "receiver": q, "amount": a, "currency": ccy}
+                 for (p, q, a, ccy) in facts_raw]
+
+    # load the co-signed FX rate(s)
+    ledger_rates = limmod.load_fx_rates(parties)
+    if not ledger_rates:
+        return {"ok": False, "error": "no co-signed FX rate on the ledger"}
+    solver_rates = [FXRate(r.base, r.quote, r.rate) for r in ledger_rates]
+
+    short2full = {_short(parties[k]): parties[k] for k in _present_firms(parties)}
+    obs = [SObl(payer=_short(p), payee=_short(q), amount=a, instrument=ccy)
+           for (p, q, a, ccy) in facts_raw]
+    plan = solve_fx(obs, solver_rates, settle_ccy="USD")
+    if not plan.feasible:
+        return {"ok": False, "infeasible": True,
+                "binding_constraints": plan.binding_constraints, "rationale": plan.rationale}
+
+    residuals = [(short2full[t.sender], short2full[t.receiver], t.amount) for t in plan.transfers]
+
+    # settle residuals in USD
+    usd_cid = _instrument_cid_ccy(parties, bank, "USD")
+    auth_cid = _authority_cid(parties, bank, operator)
+    involved = sorted({p for (p, q, a, c) in facts_raw} | {q for (p, q, a, c) in facts_raw})
+    short2key = {parties[k]: k for k in _present_firms(parties)}
+    for party in involved:
+        _ensure_account(parties, bank, party, ACC[short2key[party]])
+
+    legs, allocs = [], []
+    for (s_party, r_party, amt) in residuals:
+        s_acc = ACC[short2key[s_party]]; r_acc = ACC[short2key[r_party]]
+        leg = _leg_ccy(s_party, r_party, bank, amt, s_acc, r_acc, "USD")
+        legs.append(leg)
+        locked = _issue_and_lock(parties, bank, operator, usd_cid, s_party, s_acc, amt, "fx-net")
+        allocs.append({"leg": leg, "holdingCid": locked, "authorityCid": auth_cid})
+
+    fx_cids = limmod.fx_rate_cids(ledger_rates)
+    batch_payload = {
+        "operator": operator, "obligations": obl_cids, "obligationFacts": obl_facts,
+        "residualLegs": legs, "cashInstrument": _instr_ccy(bank, "USD"),
+        "parties": _parties_set(sorted(involved)), "creditLimits": None,
+        "fxRates": fx_cids, "liquidityFloors": None, "balanceFacts": None,
+        "valuationCurrency": "USD",
+        "regulator": parties.get("netreg"), "status": "Pending"}
+    r = op.create_tree("TradeGuard.Netting:NettingBatch", batch_payload)
+    if _err(r):
+        return {"ok": False, "error": f"batch create failed: {_err(r)}"}
+    batch_cid = _tree_created_cid(r, "TradeGuard.Netting:NettingBatch")
+
+    actors = [operator] + sorted(involved)
+    rs = op.exercise("TradeGuard.Netting:NettingBatch", batch_cid, "SettleNetting",
+                     {"allocations": allocs}, act_as=actors)
+    e = _err(rs)
+    if e:
+        return {"ok": False, "error": f"settle failed: {e}"}
+    gross = round(sum(a for (_, _, a, _) in facts_raw), 2)
+    return {"ok": True, "valued_in": "USD", "fx_rate": "1 EUR = 1.2 USD",
+            "gross_obligations_mixed_ccy": gross, "usd_residuals": len(residuals),
+            "residual_total_usd": round(sum(a for (_, _, a) in residuals), 2),
+            "discharged": len(obl_cids),
+            "rationale": plan.rationale}
+
+
 if __name__ == "__main__":
     import json
     action = sys.argv[1] if len(sys.argv) > 1 else "settle"
     fn = {"settle": settle_real, "fraud": attempt_fraud,
-          "limit": attempt_credit_breach}.get(action, settle_real)
+          "limit": attempt_credit_breach,
+          "seed_fx": seed_fx_book, "settle_fx": settle_cross_currency}.get(action, settle_real)
     print(json.dumps(fn(), indent=2))
