@@ -133,7 +133,7 @@ runNetLive = do
   batch <- submit operator do
     createCmd NettingBatch with
       operator; obligations = obls; obligationFacts = facts
-      residualLegs = [legAC, legAB]; cashInstrument = usd; creditLimits = Some []
+      residualLegs = [legAC, legAB]; cashInstrument = usd; creditLimits = Some []; fxRates = None; liquidityFloors = None; balanceFacts = None; valuationCurrency = None
       parties = Set.fromList [firmA, firmB, firmC]
       regulator = Some regulator; status = Pending
 
@@ -219,7 +219,7 @@ settleSeededBook = do
   batch <- submit operator do
     createCmd NettingBatch with
       operator; obligations = obls; obligationFacts = facts
-      residualLegs = [legAC, legAB]; cashInstrument = usd; creditLimits = Some []
+      residualLegs = [legAC, legAB]; cashInstrument = usd; creditLimits = Some []; fxRates = None; liquidityFloors = None; balanceFacts = None; valuationCurrency = None
       parties = Set.fromList [firmA, firmB, firmC]
       regulator = Some regulator; status = Pending
 

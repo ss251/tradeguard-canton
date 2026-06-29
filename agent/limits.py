@@ -26,6 +26,8 @@ from agent.real_client import RealLedgerClient, load_real_parties
 from agent.solver import CreditLimit as SolverLimit
 
 CREDIT_LIMIT_T = "TradeGuard.Netting:CreditLimit"
+FX_RATE_T = "TradeGuard.Netting:FXRate"
+LIQUIDITY_FLOOR_T = "TradeGuard.Netting:LiquidityFloor"
 
 
 def _short(party: str) -> str:
@@ -121,7 +123,7 @@ def limit_cids(ledger_limits: list[LedgerLimit]) -> list[str]:
 
 
 def clear_limits(parties: dict | None = None) -> dict:
-    """Archive every CreditLimit on the ledger (clean slate for a fresh policy).
+    """Archive every CreditLimit on the ledger (clean slate for a new policy).
     Archived via the operator using the generic Archive choice."""
     parties = parties or load_real_parties()
     op = RealLedgerClient(parties["operator"])
@@ -138,6 +140,151 @@ def clear_limits(parties: dict | None = None) -> dict:
         else:
             cleared += 1
     return {"ok": not errors, "cleared": cleared, "errors": errors}
+
+
+# --- FX rates (co-signed, on-ledger) ---------------------------------------------
+
+@dataclass
+class LedgerFXRate:
+    cid: str
+    base: str
+    quote: str
+    rate: float
+    parties: list[str]   # full party ids that co-signed
+
+    def short(self) -> str:
+        return f"1 {self.base} = {self.rate:g} {self.quote}"
+
+
+def seed_fx_rate(base: str, quote: str, rate: float, party_keys: list[str],
+                 parties: dict | None = None) -> dict:
+    """Create a co-signed FXRate on-ledger. EVERY party in `party_keys` (short names)
+    plus the operator sign it, so cross-currency netting at this rate is mutually
+    agreed and trustless. Returns {cid,...}."""
+    parties = parties or load_real_parties()
+    operator = parties["operator"]
+    party_ids = [parties[k] for k in party_keys]
+    op = RealLedgerClient(operator)
+    r = op.create_tree(FX_RATE_T,
+                       {"operator": operator, "base": base, "quote": quote,
+                        "rate": rate, "parties": {"map": [[p, {}] for p in party_ids]}},
+                       act_as=[operator] + party_ids)
+    e = _err(r)
+    if e:
+        return {"ok": False, "error": e}
+    return {"ok": True, "cid": _tree_created_cid(r, FX_RATE_T),
+            "base": base, "quote": quote, "rate": rate,
+            "parties": [_short(p) for p in party_ids]}
+
+
+def load_fx_rates(parties: dict | None = None) -> list[LedgerFXRate]:
+    """Read every FXRate the operator can see on the ledger."""
+    parties = parties or load_real_parties()
+    op = RealLedgerClient(parties["operator"])
+    out: list[LedgerFXRate] = []
+    for c in op.query(FX_RATE_T):
+        pl = c["payload"]
+        # parties is a GenMap encoding {"map":[[party,{}],...]}
+        pmap = pl.get("parties", {})
+        plist = [kv[0] for kv in pmap.get("map", [])] if isinstance(pmap, dict) else []
+        out.append(LedgerFXRate(cid=c["contractId"], base=pl["base"], quote=pl["quote"],
+                                rate=float(pl["rate"]), parties=plist))
+    return out
+
+
+def fx_rate_cids(rates: list[LedgerFXRate]) -> list[str]:
+    return [r.cid for r in rates]
+
+
+def fx_triples(rates: list[LedgerFXRate]) -> list[tuple[str, str, float]]:
+    """(base, quote, rate) triples for the solver's value valuation."""
+    return [(r.base, r.quote, r.rate) for r in rates]
+
+
+def clear_fx_rates(parties: dict | None = None) -> dict:
+    parties = parties or load_real_parties()
+    op = RealLedgerClient(parties["operator"])
+    cleared, errors = 0, []
+    for c in op.query(FX_RATE_T):
+        pl = c["payload"]
+        pmap = pl.get("parties", {})
+        signers = [kv[0] for kv in pmap.get("map", [])] if isinstance(pmap, dict) else []
+        r = op.exercise(FX_RATE_T, c["contractId"], "Archive", {},
+                        act_as=[parties["operator"]] + signers)
+        if _err(r):
+            errors.append(_err(r))
+        else:
+            cleared += 1
+    return {"ok": not errors, "cleared": cleared, "errors": errors}
+
+
+# --- liquidity floors (on-ledger) ------------------------------------------------
+
+@dataclass
+class LedgerFloor:
+    cid: str
+    party: str
+    currency: str
+    floor: float
+
+    def short(self) -> str:
+        return f"{_short(self.party)} >= {self.floor:g} {self.currency}"
+
+
+def seed_liquidity_floor(party_key: str, floor: float, currency: str = "USD",
+                         parties: dict | None = None) -> dict:
+    """Create a LiquidityFloor on-ledger: `party_key` must retain >= floor."""
+    parties = parties or load_real_parties()
+    operator = parties["operator"]
+    party = parties[party_key]
+    op = RealLedgerClient(operator)
+    r = op.create_tree(LIQUIDITY_FLOOR_T,
+                       {"operator": operator, "party": party,
+                        "currency": currency, "floor": floor},
+                       act_as=[operator, party])
+    e = _err(r)
+    if e:
+        return {"ok": False, "error": e}
+    return {"ok": True, "cid": _tree_created_cid(r, LIQUIDITY_FLOOR_T),
+            "party": _short(party), "currency": currency, "floor": floor}
+
+
+def load_liquidity_floors(parties: dict | None = None) -> list[LedgerFloor]:
+    parties = parties or load_real_parties()
+    op = RealLedgerClient(parties["operator"])
+    out: list[LedgerFloor] = []
+    for c in op.query(LIQUIDITY_FLOOR_T):
+        pl = c["payload"]
+        out.append(LedgerFloor(cid=c["contractId"], party=pl["party"],
+                               currency=pl.get("currency", "USD"), floor=float(pl["floor"])))
+    return out
+
+
+def floor_cids(floors: list[LedgerFloor]) -> list[str]:
+    return [f.cid for f in floors]
+
+
+def clear_liquidity_floors(parties: dict | None = None) -> dict:
+    parties = parties or load_real_parties()
+    op = RealLedgerClient(parties["operator"])
+    cleared, errors = 0, []
+    for c in op.query(LIQUIDITY_FLOOR_T):
+        party = c["payload"]["party"]
+        r = op.exercise(LIQUIDITY_FLOOR_T, c["contractId"], "Archive", {},
+                        act_as=[parties["operator"], party])
+        if _err(r):
+            errors.append(_err(r))
+        else:
+            cleared += 1
+    return {"ok": not errors, "cleared": cleared, "errors": errors}
+
+
+def clear_all(parties: dict | None = None) -> dict:
+    """Clear every on-ledger constraint (credit limits, FX rates, liquidity floors)."""
+    parties = parties or load_real_parties()
+    return {"credit_limits": clear_limits(parties),
+            "fx_rates": clear_fx_rates(parties),
+            "liquidity_floors": clear_liquidity_floors(parties)}
 
 
 if __name__ == "__main__":

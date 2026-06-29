@@ -52,6 +52,37 @@ class CreditLimit:
 
 
 @dataclass(frozen=True)
+class FXRate:
+    """A co-signed conversion rate: 1 unit of `base` = `rate` units of `quote`."""
+    base: str
+    quote: str
+    rate: float
+
+
+@dataclass(frozen=True)
+class FloorConstraint:
+    """`party` must hold >= `floor` of `currency` after settlement, given its
+    pre-settle `balance` (provided separately via balances dict)."""
+    party: str
+    currency: str
+    floor: float
+
+
+def fx_factor(val_ccy: str, rates: list[FXRate], cur: str) -> float | None:
+    """Value of 1 unit of `cur` in `val_ccy` via the agreed rates (mirrors the
+    on-ledger fxFactor). None if no agreed path connects them."""
+    if cur == val_ccy:
+        return 1.0
+    for r in rates:
+        if r.base == cur and r.quote == val_ccy:
+            return r.rate
+    for r in rates:
+        if r.base == val_ccy and r.quote == cur:
+            return 1.0 / r.rate
+    return None
+
+
+@dataclass(frozen=True)
 class SolvedTransfer:
     sender: str
     receiver: str
@@ -263,6 +294,157 @@ def solve(
             "this is the limits doing their job — relax a cap or add a counterparty",
         ]
     return result
+
+
+def solve_fx(
+    obligations: list[Obligation],
+    rates: list[FXRate],
+    settle_ccy: str = "USD",
+    limits: list[CreditLimit] | None = None,
+    floors: list[FloorConstraint] | None = None,
+    balances: dict[tuple[str, str], float] | None = None,
+    objective_weights: dict[tuple[str, str], float] | None = None,
+) -> SolveResult:
+    """CROSS-CURRENCY value netting at agreed FX rates.
+
+    Each party's multi-currency net is valued into `settle_ccy` at the co-signed
+    `rates`; residuals are then settled in `settle_ccy`. This mirrors the on-ledger
+    value-conservation guard. Respects credit limits (in settle_ccy) and post-settle
+    liquidity floors (in settle_ccy). Infeasible => binding constraints.
+    """
+    limits = limits or []
+    floors = floors or []
+    balances = balances or {}
+    objective_weights = objective_weights or {}
+
+    result = SolveResult(feasible=True)
+    result.gross_obligations = round(sum(o.amount for o in obligations), 2)
+
+    # value each party's net into settle_ccy
+    currencies = sorted({o.instrument for o in obligations})
+    for cur in currencies:
+        if fx_factor(settle_ccy, rates, cur) is None:
+            result.feasible = False
+            result.binding_constraints.append(
+                f"no agreed FX rate to value {cur} in {settle_ccy}")
+    if not result.feasible:
+        result.rationale = ["cannot value the book — missing co-signed FX rate(s)",
+                            *result.binding_constraints]
+        return result
+
+    val_net: dict[str, float] = {}
+    for o in obligations:
+        f = fx_factor(settle_ccy, rates, o.instrument)
+        assert f is not None  # guaranteed: validated above
+        val_net[o.payer] = round(val_net.get(o.payer, 0.0) - o.amount * f, 2)
+        val_net[o.payee] = round(val_net.get(o.payee, 0.0) + o.amount * f, 2)
+
+    result.net_positions[settle_ccy] = dict(val_net)
+
+    payers = [p for p, v in val_net.items() if v < -EPS]
+    receivers = [p for p, v in val_net.items() if v > EPS]
+    if not payers or not receivers:
+        result.gross_residual = 0.0
+        result.rationale = ["cross-currency book nets to zero value — no residual moves"]
+        return result
+
+    prob = pulp.LpProblem("netting_fx", pulp.LpMinimize)
+    x = {(p, q): pulp.LpVariable(f"x_{p}_{q}", lowBound=0)
+         for p in payers for q in receivers}
+    prob += pulp.lpSum((1.0 + objective_weights.get((p, q), 0.0)) * x[(p, q)]
+                       for p in payers for q in receivers)
+    for p in payers:
+        prob += (pulp.lpSum(x[(p, q)] for q in receivers) == round(-val_net[p], 2),
+                 f"conserve_payer_{p}")
+    for q in receivers:
+        prob += (pulp.lpSum(x[(p, q)] for p in payers) == round(val_net[q], 2),
+                 f"conserve_receiver_{q}")
+    # credit limits in settle_ccy
+    capped = {}
+    for cl in limits:
+        if cl.currency == settle_ccy and cl.frm in payers and cl.to in receivers:
+            capped[(cl.frm, cl.to)] = cl.limit
+            prob += (x[(cl.frm, cl.to)] <= cl.limit, f"limit_{cl.frm}_{cl.to}")
+    # liquidity floors in settle_ccy: post = pre + (received - sent) >= floor
+    for fl in floors:
+        if fl.currency != settle_ccy:
+            continue
+        pre = balances.get((fl.party, settle_ccy), 0.0)
+        recv = pulp.lpSum(x[(p, fl.party)] for p in payers if (p, fl.party) in x)
+        sent = pulp.lpSum(x[(fl.party, q)] for q in receivers if (fl.party, q) in x)
+        prob += (pre + recv - sent >= fl.floor, f"floor_{fl.party}")
+
+    status = prob.solve(pulp.PULP_CBC_CMD(msg=False))
+    if pulp.LpStatus[status] != "Optimal":
+        result.feasible = False
+        result.binding_constraints = _diagnose_fx_infeasibility(
+            settle_ccy, val_net, payers, receivers, capped, floors, balances)
+        result.rationale = ["NO FEASIBLE cross-currency settlement under the constraints",
+                            *result.binding_constraints]
+        return result
+
+    transfers = []
+    for (p, q), var in x.items():
+        amt = round(var.value() or 0.0, 2)
+        if amt > EPS:
+            transfers.append(SolvedTransfer(sender=p, receiver=q, amount=amt,
+                                            currency=settle_ccy))
+    transfers.sort(key=lambda t: (-t.amount, t.sender, t.receiver))
+    result.transfers = transfers
+    result.gross_residual = round(sum(t.amount for t in transfers), 2)
+    result.objective_value = result.gross_residual
+    result.rationale = [
+        f"{len(obligations)} obligations across {len(currencies)} currencies "
+        f"valued in {settle_ccy} at agreed FX rates",
+        f"netted to {len(transfers)} residual transfer(s) totaling "
+        f"{result.gross_residual} {settle_ccy} ({result.netting_efficiency_pct}% netted out)",
+        "cross-currency value conservation matches the on-ledger guard; rates are co-signed",
+        f"{len(capped)} credit limit(s), {len([f for f in floors if f.currency==settle_ccy])} liquidity floor(s) enforced",
+    ]
+    return result
+
+
+def _diagnose_fx_infeasibility(settle_ccy, val_net, payers, receivers, capped,
+                               floors, balances):
+    binding = []
+    for q in receivers:
+        due = round(val_net[q], 2)
+        if any((p, q) not in capped for p in payers):
+            continue
+        cap = round(sum(capped[(p, q)] for p in payers if (p, q) in capped), 2)
+        if cap + EPS < due:
+            binding.append(f"{q} is owed {due:g} {settle_ccy} but credit limits cap "
+                           f"inbound flow at {cap:g} (short {round(due-cap,2):g})")
+    for fl in floors:
+        if fl.currency != settle_ccy:
+            continue
+        pre = balances.get((fl.party, settle_ccy), 0.0)
+        net_p = val_net.get(fl.party, 0.0)
+        # worst case the party pays its full net out
+        if pre + net_p + EPS < fl.floor:
+            binding.append(f"{fl.party} would fall below its {fl.floor:g} {settle_ccy} "
+                           f"liquidity floor (pre {pre:g}, net {net_p:g})")
+    if not binding:
+        binding.append(f"no feasible {settle_ccy} settlement under the current constraints")
+    return binding
+
+
+def solve_constrained(
+    obligations: list[Obligation],
+    limits: list[CreditLimit] | None = None,
+    objective_weights: dict[tuple[str, str], float] | None = None,
+    rates: list[FXRate] | None = None,
+    floors: list[FloorConstraint] | None = None,
+    balances: dict[tuple[str, str], float] | None = None,
+    settle_ccy: str = "USD",
+) -> SolveResult:
+    """Unified entry point: cross-currency value netting when `rates` are provided,
+    else strict per-currency netting. Both honor credit limits; FX mode also honors
+    liquidity floors (the per-currency mode keeps the stronger isolation guarantee)."""
+    if rates:
+        return solve_fx(obligations, rates, settle_ccy, limits, floors, balances,
+                        objective_weights)
+    return solve(obligations, limits, objective_weights)
 
 
 def solve_report(

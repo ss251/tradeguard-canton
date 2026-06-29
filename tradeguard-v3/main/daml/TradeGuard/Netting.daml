@@ -24,8 +24,8 @@ module TradeGuard.Netting where
 
 import qualified DA.Set as Set
 import DA.Foldable (forA_)
-import DA.List (dedup)
-import DA.Optional (fromOptional)
+import DA.List (dedup, find)
+import DA.Optional (fromOptional, isSome)
 import TradeGuard.Types
 import TradeGuard.Holding
 import TradeGuard.Settlement
@@ -79,6 +79,70 @@ template CreditLimit
     signatory from, operator
     observer to
     ensure limit >= 0.0
+
+-- | A mutually-agreed, on-ledger FX rate: 1 unit of `base` = `rate` units of `quote`.
+--   This is the contract that makes CROSS-CURRENCY netting trustless. Netting a
+--   EUR debt against a USD debt requires a rate — and if the operator simply picked
+--   one, it could advantage a party. Here the rate is co-signed by EVERY party that
+--   relies on it (plus the operator), so a cross-currency net is settled only at a
+--   rate all of them agreed to and can audit. No party — including the operator —
+--   can net across currencies at a rate the others did not sign.
+template FXRate
+  with
+    operator : Party
+      -- ^ The netting operator publishing the rate.
+    base : Text
+      -- ^ Base currency (e.g. "EUR").
+    quote : Text
+      -- ^ Quote currency (e.g. "USD").
+    rate : Decimal
+      -- ^ 1 unit of `base` = `rate` units of `quote`.
+    parties : Parties
+      -- ^ Every party that has agreed to this rate (co-signatories).
+  where
+    signatory operator, parties
+    ensure rate > 0.0 && base /= quote
+
+-- | An on-ledger liquidity floor: `party` must retain at least `floor` of
+--   `currency` after settlement. A neobank cannot let netting drain its operating
+--   balance below a regulatory/operational minimum — the ledger enforces this even
+--   against the operator. Signed by the party (it sets its own floor) + operator.
+template LiquidityFloor
+  with
+    operator : Party
+    party : Party
+    currency : Text
+    floor : Decimal
+      -- ^ Minimum balance `party` must hold in `currency` after a settlement.
+  where
+    signatory operator, party
+    observer party
+    ensure floor >= 0.0
+
+-- | A pre-settlement balance fact: `party` holds `balance` of `currency` before the
+--   netting settles. Used by the liquidity-floor guard to compute the post-settle
+--   balance (pre + residual net) and assert it stays above the floor. Operator-
+--   asserted alongside the obligation facts (same trust model).
+data BalanceFact = BalanceFact
+  with
+    party : Party
+    currency : Text
+    balance : Decimal
+  deriving (Eq, Show)
+
+-- | Convert ONE unit of `cur` into the valuation currency `valCcy` using the agreed
+--   on-ledger rates. Returns None if no co-signed rate connects them — in which case
+--   the settle is REJECTED (there is no trustless way to value the cross-currency
+--   net, so we refuse rather than guess). A direct base->quote rate is used as-is;
+--   the inverse quote->base rate is used as 1/rate.
+fxFactor : Text -> [(Text, Text, Decimal)] -> Text -> Optional Decimal
+fxFactor valCcy rates cur =
+  if cur == valCcy then Some 1.0
+  else case find (\(b, q, _) -> b == cur && q == valCcy) rates of
+    Some (_, _, r) -> Some r
+    None -> case find (\(b, q, _) -> b == valCcy && q == cur) rates of
+      Some (_, _, r) -> Some (1.0 / r)
+      None -> None
 
 -- | A residual transfer the agent proposes after netting: move `amount` of
 --   `currency` from `sender` to `receiver`. (A thin alias over a settlement Leg
@@ -134,6 +198,20 @@ template NettingBatch
       --   and LAST field for Canton smart-contract-upgrade compatibility; absent/None
       --   => unconstrained. The settle choice fetches each and rejects any plan whose
       --   residual from->to in a currency exceeds the cap.
+    fxRates : Optional [ContractId FXRate]
+      -- ^ Co-signed on-ledger FX rates. When present (non-empty), conservation is
+      --   checked in VALUE terms across currencies at these agreed rates (cross-
+      --   currency netting); each rate must be signed by every party in the book.
+      --   Absent/None => strict PER-CURRENCY conservation (the stronger guarantee).
+    liquidityFloors : Optional [ContractId LiquidityFloor]
+      -- ^ On-ledger minimum balances the post-settle position must respect.
+    balanceFacts : Optional [BalanceFact]
+      -- ^ Pre-settlement balances (party, currency, amount), for the liquidity-floor
+      --   guard to compute post-settle balances. Operator-asserted (same trust model
+      --   as obligationFacts).
+    valuationCurrency : Optional Text
+      -- ^ The common currency cross-currency value-conservation is measured in
+      --   (default "USD" when absent).
   where
     signatory operator
     observer parties, regObs regulator
@@ -162,16 +240,49 @@ template NettingBatch
             -- every currency that appears anywhere in the book or the plan
             currencies = dedup ([ccyOf t | t <- obligationFacts]
                               <> [ccyOf t | t <- residualTransfers])
+            valCcy = fromOptional "USD" valuationCurrency
 
-        -- adversarial guard 1: conservation, checked INDEPENDENTLY PER CURRENCY.
-        -- A USD residual can never offset a EUR obligation — each party's net in
-        -- each currency across the obligations must equal its net in that currency
-        -- across the residual legs.
-        forA_ currencies $ \cur ->
-          forA_ allParties $ \p ->
-            assertMsg
-              ("netting must conserve value for " <> show p <> " in " <> cur)
-              (netOfCur obligationFacts p cur == netOfCur residualTransfers p cur)
+        -- fetch + verify the co-signed FX rates (if any). EACH rate must be signed by
+        -- EVERY party in the book — otherwise it is not a mutually-agreed rate and we
+        -- refuse to use it. This is what makes cross-currency netting trustless.
+        rateCids <- pure (fromOptional [] fxRates)
+        rateTriples <- mapA (\rcid -> do
+          fx <- fetch rcid
+          assertMsg "FX rate must be agreed by every party in the book"
+            (parties `Set.isSubsetOf` fx.parties)
+          assertMsg "FX rate operator must match the batch operator"
+            (fx.operator == operator)
+          pure (fx.base, fx.quote, fx.rate)) rateCids
+        let usingFx = not (null rateTriples)
+
+        if usingFx
+          then do
+            -- Every currency in play must have an agreed path to the valuation
+            -- currency, else we cannot trustlessly value the cross-currency net.
+            forA_ currencies $ \cur ->
+              assertMsg ("no agreed FX rate to value " <> cur <> " in " <> valCcy)
+                (isSome (fxFactor valCcy rateTriples cur))
+            -- VALUE-BASED conservation across currencies at the AGREED rates. Each
+            -- party's total net VALUE (sum of per-currency nets * fx factor) across
+            -- the obligations must equal its total net value across the residuals.
+            let factorOf cur = fromOptional 0.0 (fxFactor valCcy rateTriples cur)
+                valueNet transfers party =
+                  sum [ netOfCur transfers party cur * factorOf cur | cur <- currencies ]
+            forA_ allParties $ \p ->
+              assertMsg
+                ("cross-currency netting must conserve VALUE for " <> show p
+                  <> " (in " <> valCcy <> ", at agreed FX rates)")
+                (valueNet obligationFacts p == valueNet residualTransfers p)
+          else
+            -- adversarial guard 1: conservation, checked INDEPENDENTLY PER CURRENCY.
+            -- A USD residual can never offset a EUR obligation — each party's net in
+            -- each currency across the obligations must equal its net in that currency
+            -- across the residual legs.
+            forA_ currencies $ \cur ->
+              forA_ allParties $ \p ->
+                assertMsg
+                  ("netting must conserve value for " <> show p <> " in " <> cur)
+                  (netOfCur obligationFacts p cur == netOfCur residualTransfers p cur)
 
         -- adversarial guard 2: efficiency — residual gross <= obligation gross,
         -- per currency (the net can never be larger than what it nets).
@@ -197,6 +308,22 @@ template NettingBatch
             ("credit limit breached: " <> show cl.from <> " -> " <> show cl.to
               <> " in " <> cl.currency)
             (owed <= cl.limit)
+
+        -- adversarial guard 5: on-ledger LIQUIDITY FLOORS. For each floor, the
+        -- party's POST-settle balance in that currency (pre-settle balance + its net
+        -- residual flow) must stay at or above the floor. A netting plan that would
+        -- drain a firm below its operational minimum is REJECTED by the ledger.
+        let bFacts = fromOptional [] balanceFacts
+            preBalance party cur =
+              sum [b.balance | b <- bFacts, b.party == party, b.currency == cur]
+        forA_ (fromOptional [] liquidityFloors) $ \lfCid -> do
+          lf <- fetch lfCid
+          let post = preBalance lf.party lf.currency
+                   + netOfCur residualTransfers lf.party lf.currency
+          assertMsg
+            ("liquidity floor breached: " <> show lf.party <> " would hold "
+              <> show post <> " " <> lf.currency <> " < floor " <> show lf.floor)
+            (post >= lf.floor)
 
         -- per-currency gross totals for the result record
         let grossObl = sum [t.amount | t <- obligationFacts]

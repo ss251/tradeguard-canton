@@ -133,6 +133,69 @@ def test_report_shape():
     print("test_report_shape PASSED — report is well-formed and JSON-serializable")
 
 
+def test_fx_cross_currency_netting():
+    """USD + EUR netted by VALUE at an agreed rate, settled in USD."""
+    from agent.solver import FXRate, solve_fx
+    book = [Obligation("A", "B", 100.0, "USD"), Obligation("B", "A", 50.0, "EUR")]
+    rates = [FXRate("EUR", "USD", 1.2)]
+    r = solve_fx(book, rates, settle_ccy="USD")
+    assert r.feasible, r.binding_constraints
+    # A owes B 100 USD; B owes A 50 EUR = 60 USD -> A net owes B 40 USD
+    assert len(r.transfers) == 1, r.transfers
+    t = r.transfers[0]
+    assert t.sender == "A" and t.receiver == "B" and abs(t.amount - 40.0) < 0.01, r.transfers
+    assert t.currency == "USD"
+    print("test_fx_cross_currency_netting PASSED — 100 USD vs 50 EUR @1.2 -> A->B 40 USD")
+
+
+def test_fx_inverse_rate():
+    """The inverse direction (USD->EUR via a EUR->USD rate) values correctly."""
+    from agent.solver import FXRate, fx_factor
+    rates = [FXRate("EUR", "USD", 1.25)]
+    assert abs(fx_factor("USD", rates, "EUR") - 1.25) < 1e-9
+    assert abs(fx_factor("EUR", rates, "USD") - 0.8) < 1e-9   # 1/1.25
+    assert fx_factor("USD", rates, "USD") == 1.0
+    assert fx_factor("USD", rates, "GBP") is None             # no agreed path
+    print("test_fx_inverse_rate PASSED — direct, inverse, identity, and missing-path all correct")
+
+
+def test_fx_missing_rate_infeasible():
+    """A currency with no agreed path to the settlement currency => infeasible."""
+    from agent.solver import FXRate, solve_fx
+    book = [Obligation("A", "B", 100.0, "USD"), Obligation("B", "A", 50.0, "GBP")]
+    rates = [FXRate("EUR", "USD", 1.2)]  # nothing connects GBP
+    r = solve_fx(book, rates, settle_ccy="USD")
+    assert not r.feasible
+    assert any("GBP" in b for b in r.binding_constraints), r.binding_constraints
+    print("test_fx_missing_rate_infeasible PASSED — missing FX path correctly refused")
+
+
+def test_liquidity_floor_constraint():
+    """A liquidity floor the plan would breach => infeasible with the binding floor."""
+    from agent.solver import FXRate, FloorConstraint, solve_fx
+    book = [Obligation("A", "B", 100.0, "USD")]
+    rates = [FXRate("EUR", "USD", 1.2)]  # unused but FX mode
+    floors = [FloorConstraint("A", "USD", 50.0)]
+    balances = {("A", "USD"): 120.0}     # 120 - 100 = 20 < 50
+    r = solve_fx(book, rates, settle_ccy="USD", floors=floors, balances=balances)
+    assert not r.feasible, "A draining below its floor must be infeasible"
+    assert any("floor" in b.lower() for b in r.binding_constraints), r.binding_constraints
+    print(f"test_liquidity_floor_constraint PASSED — {r.binding_constraints[0]}")
+
+
+def test_liquidity_floor_satisfiable():
+    """Same book but a higher pre-balance keeps the party above its floor."""
+    from agent.solver import FXRate, FloorConstraint, solve_fx
+    book = [Obligation("A", "B", 100.0, "USD")]
+    rates = [FXRate("EUR", "USD", 1.2)]
+    floors = [FloorConstraint("A", "USD", 50.0)]
+    balances = {("A", "USD"): 200.0}     # 200 - 100 = 100 >= 50
+    r = solve_fx(book, rates, settle_ccy="USD", floors=floors, balances=balances)
+    assert r.feasible, r.binding_constraints
+    assert len(r.transfers) == 1 and abs(r.transfers[0].amount - 100.0) < 0.01
+    print("test_liquidity_floor_satisfiable PASSED — floor respected, settles normally")
+
+
 if __name__ == "__main__":
     test_unconstrained_matches_canonical()
     test_multi_currency_independent()
@@ -140,4 +203,9 @@ if __name__ == "__main__":
     test_infeasible_returns_binding_constraint()
     test_objective_weights_steer_plan()
     test_report_shape()
+    test_fx_cross_currency_netting()
+    test_fx_inverse_rate()
+    test_fx_missing_rate_infeasible()
+    test_liquidity_floor_constraint()
+    test_liquidity_floor_satisfiable()
     print("\nALL SOLVER TESTS PASSED")

@@ -113,7 +113,7 @@ testThreePartyNetting = do
   batch <- submit w.operator do
     createCmd NettingBatch with
       operator = w.operator; obligations = obls; obligationFacts = facts
-      residualLegs; cashInstrument = w.usd; creditLimits = Some []
+      residualLegs; cashInstrument = w.usd; creditLimits = Some []; fxRates = None; liquidityFloors = None; balanceFacts = None; valuationCurrency = None
       parties = Set.fromList [w.firmA, w.firmB, w.firmC]
       regulator = Some w.regulator; status = Pending
 
@@ -171,7 +171,7 @@ testNettingRejectsValueViolation = do
   batch <- submit w.operator do
     createCmd NettingBatch with
       operator = w.operator; obligations = [o1]; obligationFacts = facts
-      residualLegs = badLegs; cashInstrument = w.usd; creditLimits = Some []
+      residualLegs = badLegs; cashInstrument = w.usd; creditLimits = Some []; fxRates = None; liquidityFloors = None; balanceFacts = None; valuationCurrency = None
       parties = Set.fromList [w.firmA, w.firmB]
       regulator = None; status = Pending
 
@@ -256,7 +256,7 @@ testMultiCurrencyNetting = do
   batch <- submit w.operator do
     createCmd NettingBatch with
       operator = w.operator; obligations = obls; obligationFacts = facts
-      residualLegs; cashInstrument = w.usd; creditLimits = Some []
+      residualLegs; cashInstrument = w.usd; creditLimits = Some []; fxRates = None; liquidityFloors = None; balanceFacts = None; valuationCurrency = None
       parties = Set.fromList [w.firmA, w.firmB]
       regulator = Some w.regulator; status = Pending
 
@@ -311,7 +311,7 @@ testNettingRejectsCreditLimitBreach = do
   batch <- submit w.operator do
     createCmd NettingBatch with
       operator = w.operator; obligations = [o1]; obligationFacts = facts
-      residualLegs = [leg]; cashInstrument = w.usd; creditLimits = Some [limit]
+      residualLegs = [leg]; cashInstrument = w.usd; creditLimits = Some [limit]; fxRates = None; liquidityFloors = None; balanceFacts = None; valuationCurrency = None
       parties = Set.fromList [w.firmA, w.firmB]
       regulator = None; status = Pending
 
@@ -329,4 +329,201 @@ testNettingRejectsCreditLimitBreach = do
   assertMsg "obligation must survive the rejected settle" (not (isNone still))
 
   debug "testNettingRejectsCreditLimitBreach PASSED: on-ledger credit limit rejected the over-exposing plan; nothing settled"
+  pure ()
+
+-- | CROSS-CURRENCY netting at a CO-SIGNED FX rate. FirmA owes FirmB 100 USD; FirmB
+--   owes FirmA 50 EUR. With an agreed rate 1 EUR = 1.2 USD, FirmB's 50 EUR = 60 USD,
+--   so the net VALUE is A owes B 40 USD. Settles as a single 40 USD residual — the
+--   EUR leg is netted against the USD leg AT THE RATE BOTH PARTIES SIGNED. This is
+--   trustless cross-currency netting: no party can be cheated by an operator-chosen
+--   rate, because the rate contract is co-signed by every party in the book.
+testCrossCurrencyNettingAtAgreedRate : Script ()
+testCrossCurrencyNettingAtAgreedRate = do
+  w <- setupNetWorld
+  let eur = InstrumentKey with
+        depository = w.bank; issuer = w.bank; id = Id "EUR"; version = "1"
+        holdingStandard = TransferableFungible
+  usdI <- submit w.bank do
+    createCmd Instrument with
+      depository = w.bank; issuer = w.bank; id = Id "USD"; version = "1"
+      holdingStandard = TransferableFungible; description = "USD"; observers = Set.empty
+  _ <- submit w.bank do
+    createCmd Instrument with
+      depository = w.bank; issuer = w.bank; id = Id "EUR"; version = "1"
+      holdingStandard = TransferableFungible; description = "EUR"; observers = Set.empty
+  mkCashAccount w.bank w.firmA "A-cash"
+  mkCashAccount w.bank w.firmB "B-cash"
+  _ <- submit w.bank do createCmd SettlementAuthority with custodian = w.bank; coordinator = w.operator
+  auth <- findAuth w.bank w.operator
+
+  -- co-signed FX rate: 1 EUR = 1.2 USD, agreed by both firms + operator
+  let bookParties = Set.fromList [w.firmA, w.firmB]
+  fx <- submitMulti [w.firmA, w.firmB, w.operator] [] do
+    createCmd FXRate with
+      operator = w.operator; base = "EUR"; quote = "USD"; rate = 1.2
+      parties = bookParties
+
+  oUsd <- mkObligation w.firmA w.firmB w.operator w.usd 100.0 "A->B 100 USD"
+  oEur <- mkObligation w.firmB w.firmA w.operator eur 50.0   "B->A 50 EUR"
+
+  let obls = [oUsd, oEur]
+      facts = [ NetTransfer w.firmA w.firmB 100.0 (Some "USD")
+              , NetTransfer w.firmB w.firmA 50.0  (Some "EUR") ]
+      -- value net: A owes B 100 USD; B owes A 50 EUR = 60 USD -> A net owes B 40 USD
+      legUsd = Leg with sender = w.firmA; receiver = w.firmB; custodian = w.bank; instrument = w.usd; amount = 40.0; senderAccountId = Id "A-cash"; receiverAccountId = Id "B-cash"
+      residualLegs = [legUsd]
+
+  batch <- submit w.operator do
+    createCmd NettingBatch with
+      operator = w.operator; obligations = obls; obligationFacts = facts
+      residualLegs; cashInstrument = w.usd; creditLimits = Some []
+      fxRates = Some [fx]; liquidityFloors = None; balanceFacts = None
+      valuationCurrency = Some "USD"
+      parties = bookParties
+      regulator = Some w.regulator; status = Pending
+
+  aUsd <- issueCash usdI w.bank w.firmA "A-cash" 40.0
+  locked <- submitMulti [w.bank, w.firmA] [] do
+    exerciseCmd aUsd LockHolding with locker = w.operator; context = "fx"
+  let allocs = [ AllocatedLeg with leg = legUsd; holdingCid = locked; authorityCid = auth ]
+
+  result <- submitMulti (w.operator :: [w.firmA, w.firmB]) [] do
+    exerciseCmd batch SettleNetting with allocations = allocs
+
+  result.obligationsDischarged === 2
+  result.residualsSettled === 1
+  debug "testCrossCurrencyNettingAtAgreedRate PASSED: EUR netted against USD at the co-signed 1.2 rate -> single 40 USD residual"
+  pure ()
+
+-- | CROSS-CURRENCY netting must FAIL if the residual doesn't conserve VALUE at the
+--   agreed rate. Same book, but the operator proposes only 30 USD (should be 40).
+testCrossCurrencyRejectsValueViolation : Script ()
+testCrossCurrencyRejectsValueViolation = do
+  w <- setupNetWorld
+  let eur = InstrumentKey with
+        depository = w.bank; issuer = w.bank; id = Id "EUR"; version = "1"
+        holdingStandard = TransferableFungible
+  usdI <- submit w.bank do
+    createCmd Instrument with
+      depository = w.bank; issuer = w.bank; id = Id "USD"; version = "1"
+      holdingStandard = TransferableFungible; description = "USD"; observers = Set.empty
+  _ <- submit w.bank do
+    createCmd Instrument with
+      depository = w.bank; issuer = w.bank; id = Id "EUR"; version = "1"
+      holdingStandard = TransferableFungible; description = "EUR"; observers = Set.empty
+  mkCashAccount w.bank w.firmA "A-cash"
+  mkCashAccount w.bank w.firmB "B-cash"
+  _ <- submit w.bank do createCmd SettlementAuthority with custodian = w.bank; coordinator = w.operator
+  auth <- findAuth w.bank w.operator
+  let bookParties = Set.fromList [w.firmA, w.firmB]
+  fx <- submitMulti [w.firmA, w.firmB, w.operator] [] do
+    createCmd FXRate with
+      operator = w.operator; base = "EUR"; quote = "USD"; rate = 1.2; parties = bookParties
+  oUsd <- mkObligation w.firmA w.firmB w.operator w.usd 100.0 "A->B 100 USD"
+  oEur <- mkObligation w.firmB w.firmA w.operator eur 50.0   "B->A 50 EUR"
+  let facts = [ NetTransfer w.firmA w.firmB 100.0 (Some "USD")
+              , NetTransfer w.firmB w.firmA 50.0  (Some "EUR") ]
+      badLeg = Leg with sender = w.firmA; receiver = w.firmB; custodian = w.bank; instrument = w.usd; amount = 30.0; senderAccountId = Id "A-cash"; receiverAccountId = Id "B-cash"  -- should be 40
+  batch <- submit w.operator do
+    createCmd NettingBatch with
+      operator = w.operator; obligations = [oUsd, oEur]; obligationFacts = facts
+      residualLegs = [badLeg]; cashInstrument = w.usd; creditLimits = Some []
+      fxRates = Some [fx]; liquidityFloors = None; balanceFacts = None
+      valuationCurrency = Some "USD"
+      parties = bookParties; regulator = None; status = Pending
+  bad <- issueCash usdI w.bank w.firmA "A-cash" 30.0
+  locked <- submitMulti [w.bank, w.firmA] [] do exerciseCmd bad LockHolding with locker = w.operator; context = "fxbad"
+  let allocs = [ AllocatedLeg with leg = badLeg; holdingCid = locked; authorityCid = auth ]
+  submitMultiMustFail (w.operator :: [w.firmA, w.firmB]) [] do
+    exerciseCmd batch SettleNetting with allocations = allocs
+  debug "testCrossCurrencyRejectsValueViolation PASSED: value-conservation guard rejected the under-valued cross-currency residual"
+  pure ()
+
+-- | LIQUIDITY FLOOR: a netting plan that would drain a party below its on-ledger
+--   minimum balance is REJECTED. FirmA owes FirmB 100; A's net residual is -100 USD.
+--   A holds 120 pre-settle but has a 50 USD floor -> post-settle 20 < 50 -> rejected.
+testNettingRejectsLiquidityFloorBreach : Script ()
+testNettingRejectsLiquidityFloorBreach = do
+  w <- setupNetWorld
+  cashI <- submit w.bank do
+    createCmd Instrument with
+      depository = w.bank; issuer = w.bank; id = Id "USD"; version = "1"
+      holdingStandard = TransferableFungible; description = "USD"; observers = Set.empty
+  mkCashAccount w.bank w.firmA "A-cash"
+  mkCashAccount w.bank w.firmB "B-cash"
+  _ <- submit w.bank do createCmd SettlementAuthority with custodian = w.bank; coordinator = w.operator
+  auth <- findAuth w.bank w.operator
+
+  o1 <- mkObligation w.firmA w.firmB w.operator w.usd 100.0 "A->B 100"
+  -- FirmA sets a 50 USD operating floor
+  floor <- submitMulti [w.firmA, w.operator] [] do
+    createCmd LiquidityFloor with operator = w.operator; party = w.firmA; currency = "USD"; floor = 50.0
+
+  let facts = [ NetTransfer w.firmA w.firmB 100.0 (Some "USD") ]
+      leg = Leg with sender = w.firmA; receiver = w.firmB; custodian = w.bank; instrument = w.usd; amount = 100.0; senderAccountId = Id "A-cash"; receiverAccountId = Id "B-cash"
+      -- A holds 120 pre-settle; paying 100 leaves 20 < 50 floor
+      bal = [ BalanceFact with party = w.firmA; currency = "USD"; balance = 120.0 ]
+  batch <- submit w.operator do
+    createCmd NettingBatch with
+      operator = w.operator; obligations = [o1]; obligationFacts = facts
+      residualLegs = [leg]; cashInstrument = w.usd; creditLimits = Some []
+      fxRates = None; liquidityFloors = Some [floor]; balanceFacts = Some bal
+      valuationCurrency = None
+      parties = Set.fromList [w.firmA, w.firmB]; regulator = None; status = Pending
+
+  cash <- issueCash cashI w.bank w.firmA "A-cash" 100.0
+  locked <- submitMulti [w.bank, w.firmA] [] do exerciseCmd cash LockHolding with locker = w.operator; context = "lf"
+  let allocs = [ AllocatedLeg with leg; holdingCid = locked; authorityCid = auth ]
+
+  submitMultiMustFail (w.operator :: [w.firmA, w.firmB]) [] do
+    exerciseCmd batch SettleNetting with allocations = allocs
+
+  still <- queryContractId w.firmA o1
+  assertMsg "obligation must survive the rejected settle" (not (isNone still))
+  debug "testNettingRejectsLiquidityFloorBreach PASSED: on-ledger liquidity floor rejected the draining plan; nothing settled"
+  pure ()
+
+-- | FX rate NOT co-signed by all parties must be REFUSED. Same cross-currency book,
+--   but the FXRate omits FirmB -> the settle cannot trust it -> rejected.
+testCrossCurrencyRejectsUnsignedRate : Script ()
+testCrossCurrencyRejectsUnsignedRate = do
+  w <- setupNetWorld
+  let eur = InstrumentKey with
+        depository = w.bank; issuer = w.bank; id = Id "EUR"; version = "1"
+        holdingStandard = TransferableFungible
+  usdI <- submit w.bank do
+    createCmd Instrument with
+      depository = w.bank; issuer = w.bank; id = Id "USD"; version = "1"
+      holdingStandard = TransferableFungible; description = "USD"; observers = Set.empty
+  _ <- submit w.bank do
+    createCmd Instrument with
+      depository = w.bank; issuer = w.bank; id = Id "EUR"; version = "1"
+      holdingStandard = TransferableFungible; description = "EUR"; observers = Set.empty
+  mkCashAccount w.bank w.firmA "A-cash"
+  mkCashAccount w.bank w.firmB "B-cash"
+  _ <- submit w.bank do createCmd SettlementAuthority with custodian = w.bank; coordinator = w.operator
+  auth <- findAuth w.bank w.operator
+  -- FX rate signed by ONLY FirmA + operator (NOT FirmB) -> not mutually agreed
+  fx <- submitMulti [w.firmA, w.operator] [] do
+    createCmd FXRate with
+      operator = w.operator; base = "EUR"; quote = "USD"; rate = 1.2
+      parties = Set.fromList [w.firmA]
+  oUsd <- mkObligation w.firmA w.firmB w.operator w.usd 100.0 "A->B 100 USD"
+  oEur <- mkObligation w.firmB w.firmA w.operator eur 50.0   "B->A 50 EUR"
+  let facts = [ NetTransfer w.firmA w.firmB 100.0 (Some "USD")
+              , NetTransfer w.firmB w.firmA 50.0  (Some "EUR") ]
+      legUsd = Leg with sender = w.firmA; receiver = w.firmB; custodian = w.bank; instrument = w.usd; amount = 40.0; senderAccountId = Id "A-cash"; receiverAccountId = Id "B-cash"
+  batch <- submit w.operator do
+    createCmd NettingBatch with
+      operator = w.operator; obligations = [oUsd, oEur]; obligationFacts = facts
+      residualLegs = [legUsd]; cashInstrument = w.usd; creditLimits = Some []
+      fxRates = Some [fx]; liquidityFloors = None; balanceFacts = None
+      valuationCurrency = Some "USD"
+      parties = Set.fromList [w.firmA, w.firmB]; regulator = None; status = Pending
+  aUsd <- issueCash usdI w.bank w.firmA "A-cash" 40.0
+  locked <- submitMulti [w.bank, w.firmA] [] do exerciseCmd aUsd LockHolding with locker = w.operator; context = "fxun"
+  let allocs = [ AllocatedLeg with leg = legUsd; holdingCid = locked; authorityCid = auth ]
+  submitMultiMustFail (w.operator :: [w.firmA, w.firmB]) [] do
+    exerciseCmd batch SettleNetting with allocations = allocs
+  debug "testCrossCurrencyRejectsUnsignedRate PASSED: an FX rate not co-signed by all parties was refused"
   pure ()
