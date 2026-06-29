@@ -182,6 +182,26 @@
       </div>
 
       <div class="card" style="margin-top:18px">
+        <h3>Cross-currency (FX) <span class="tag">co-signed rate</span></h3>
+        <div style="font-family:var(--mono);font-size:.82rem;color:var(--ink2);margin-bottom:8px">The FX rate is an on-ledger contract <b>signed by every party</b>. A EUR debt nets against a USD debt only at a rate all parties agreed to — the operator can't pick it. Netting conserves <b>value</b> at that rate.</div>
+        <div id="fxlist" style="font-family:var(--mono);font-size:.86rem;line-height:1.8;color:var(--ink2)">— no FX rate set —</div>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <button class="ghost" onclick="seedFx()">Seed USD+EUR book @ 1.2</button>
+          <button class="green" onclick="settleFx()">Settle cross-currency</button>
+        </div>
+        <div class="banner" id="fxbanner" style="display:none"></div>
+      </div>
+
+      <div class="card" style="margin-top:18px">
+        <h3>On-ledger Liquidity Floors <span class="tag">min balance, enforced</span></h3>
+        <div id="floorslist" style="font-family:var(--mono);font-size:.86rem;line-height:1.8;color:var(--ink2)">— none set —</div>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <button class="ghost" onclick="seedFloor()">Seed FirmA ≥ 50 USD</button>
+          <button class="ghost" onclick="clearAll()">Clear ALL constraints</button>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:18px">
         <h3>Privacy — who sees the book <span class="tag">live, per party</span></h3>
         <div id="privacy"></div>
         <div class="privnote">The operator sees the whole book to compute the net; every firm sees only its own obligations; the ledger itself rejects any under-settlement. <b>No trusted compute, no full-book disclosure — privacy is what makes safe netting possible.</b> Click a row to see refs.</div>
@@ -312,6 +332,14 @@ function renderLimits(st){
   el.innerHTML = lims.length
     ? lims.map(l=>`<div>${l.from} → ${l.to} &nbsp;<b>≤ ${l.limit.toFixed(0)} ${l.currency}</b></div>`).join('')
     : '— none set —';
+  const fxel=$('#fxlist'); const fx=st.fx_rates||[];
+  if(fxel) fxel.innerHTML = fx.length
+    ? fx.map(r=>`<div>1 ${r.base} = ${r.rate} ${r.quote} &nbsp;<span style="color:var(--green)">✓ ${r.signers} signers</span></div>`).join('')
+    : '— no FX rate set —';
+  const flel=$('#floorslist'); const fl=st.liquidity_floors||[];
+  if(flel) flel.innerHTML = fl.length
+    ? fl.map(f=>`<div>${f.party} &nbsp;<b>≥ ${f.floor.toFixed(0)} ${f.currency}</b></div>`).join('')
+    : '— none set —';
 }
 
 function banner(kind,msg){const b=$('#banner');b.className='banner '+kind;b.textContent=msg;}
@@ -386,6 +414,41 @@ async function clearLimits(){
   try{const r=await fetch('/api/console/limits/clear',{method:'POST'});const d=await r.json();
     render(d.state); toast('Credit limits cleared ('+d.cleared+')');}
   catch(e){toast('clear error',true);}
+}
+
+async function seedFx(){
+  busy('#b_seed',true,'seeding FX book');
+  try{const r=await fetch('/api/console/seed-fx',{method:'POST'});const d=await r.json();
+    COMPUTED=false; JUST_SETTLED=false; $('#plancard').style.display='none'; $('#banner').className='banner';
+    render(d.state);
+    const fb=$('#fxbanner'); fb.style.display='block'; fb.className='banner ok';
+    fb.textContent='✓ Seeded USD+EUR book (4 obligations) + co-signed rate '+(d.fx_rate||'1 EUR = 1.2 USD');
+    toast(d.ok?'FX book + co-signed rate seeded':'seed failed',!d.ok);
+  }catch(e){toast('fx seed error',true);} finally{busy('#b_seed',false);}
+}
+async function settleFx(){
+  busy('#b_settle',true,'settling cross-currency');
+  try{const r=await fetch('/api/console/settle-fx',{method:'POST'});const d=await r.json();
+    const fb=$('#fxbanner'); fb.style.display='block';
+    if(d.ok){ JUST_SETTLED=true; COMPUTED=false; render(d.state);
+      fb.className='banner ok';
+      fb.textContent='✓ Cross-currency settled at '+d.fx_rate+': '+d.gross_obligations_mixed_ccy+
+        ' mixed-ccy gross → '+d.residual_total_usd+' USD in '+d.usd_residuals+' residual(s); '+d.discharged+' obligations discharged';
+      toast('✓ Cross-currency settled by value');
+    } else if(d.infeasible){ fb.className='banner rej';
+      fb.textContent='⃠ infeasible: '+(d.binding_constraints||[]).join('; '); toast('infeasible',true);
+    } else { fb.className='banner rej'; fb.textContent='error: '+(d.error||'failed'); toast('fx settle failed',true); }
+  }catch(e){toast('fx settle error',true);} finally{busy('#b_settle',false);}
+}
+async function seedFloor(){
+  try{const r=await fetch('/api/console/floors',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({party:'firma',floor:50,currency:'USD'})});
+    const d=await r.json(); render(d.state); toast(d.ok?'On-ledger liquidity floor seeded ✓':'seed failed',!d.ok);
+  }catch(e){toast('floor error',true);}
+}
+async function clearAll(){
+  try{const r=await fetch('/api/console/clear-all',{method:'POST'});const d=await r.json();
+    render(d.state); $('#fxbanner').style.display='none'; toast('All on-ledger constraints cleared');}
+  catch(e){toast('clear-all error',true);}
 }
 
 async function doCreditBreach(){

@@ -153,6 +153,8 @@ def build_state(policy_text: str | None = None) -> dict:
 
     # on-ledger credit limits (the live risk constraints)
     ledger_limits = limmod.load_limits(parties)
+    ledger_fx = limmod.load_fx_rates(parties)
+    ledger_floors = limmod.load_liquidity_floors(parties)
 
     # settlement status (operator's view). After settle the obligations are
     # discharged (book -> 0) and residual cash holdings exist at the firms.
@@ -170,6 +172,12 @@ def build_state(policy_text: str | None = None) -> dict:
         "credit_limits": [
             {"from": l.frm.split("::")[0], "to": l.to.split("::")[0],
              "currency": l.currency, "limit": l.limit} for l in ledger_limits],
+        "fx_rates": [
+            {"base": r.base, "quote": r.quote, "rate": r.rate,
+             "signers": len(r.parties)} for r in ledger_fx],
+        "liquidity_floors": [
+            {"party": f.party.split("::")[0], "currency": f.currency,
+             "floor": f.floor} for f in ledger_floors],
         "settled_count": len(settled),
         "open_batches": len(batches),
         "residual_holdings": firm_holdings,
@@ -261,6 +269,28 @@ class Handler(BaseHTTPRequestHandler):
                 # seed an on-ledger CreditLimit the true plan breaches, submit the
                 # conserving plan, show the ledger reject it on the credit limit
                 res = net_settle.attempt_credit_breach()
+                res["state"] = build_state()
+                self._send(200, res)
+            elif u.path == "/api/console/seed-fx":
+                # seed a 2-currency book + a co-signed FX rate (cross-currency demo)
+                res = net_settle.seed_fx_book()
+                res["state"] = build_state()
+                self._send(200, res)
+            elif u.path == "/api/console/settle-fx":
+                # value-net the cross-currency book at the co-signed rate and settle
+                res = net_settle.settle_cross_currency()
+                res["state"] = build_state()
+                self._send(200, res)
+            elif u.path == "/api/console/floors":
+                # seed an on-ledger LiquidityFloor: {party,floor,currency}
+                res = limmod.seed_liquidity_floor(
+                    body.get("party", "firma"), float(body.get("floor", 50.0)),
+                    body.get("currency", "USD"))
+                res["state"] = build_state()
+                self._send(200, res)
+            elif u.path == "/api/console/clear-all":
+                # clear every on-ledger constraint (limits, fx, floors)
+                res = limmod.clear_all()
                 res["state"] = build_state()
                 self._send(200, res)
             else:
