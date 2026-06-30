@@ -196,6 +196,88 @@ def test_liquidity_floor_satisfiable():
     print("test_liquidity_floor_satisfiable PASSED — floor respected, settles normally")
 
 
+def test_maximal_whole_book_when_feasible():
+    """When the whole book fits, solve_maximal settles everything (reduces to solve)."""
+    from agent.solver import solve_maximal
+    book = [Obligation("A", "B", 100.0), Obligation("B", "C", 100.0),
+            Obligation("C", "A", 80.0), Obligation("A", "C", 50.0),
+            Obligation("C", "B", 30.0)]
+    r = solve_maximal(book)
+    assert r.feasible
+    assert len(r.deferred_obligations) == 0, r.deferred_obligations
+    assert len(r.settled_obligations) == 5
+    assert r.settlement_rate_pct == 100.0
+    assert abs(r.gross_residual - 70.0) < 0.01, r.gross_residual
+    print(f"test_maximal_whole_book_when_feasible PASSED — 5/5 settled, {r.gross_residual} residual")
+
+
+def test_maximal_reroutes_before_deferring():
+    """SMART behaviour: when a cap binds but the value can be rerouted (transshipment
+    through another party), solve_maximal settles the WHOLE book via the reroute rather
+    than deferring — even in cases the simpler solve() refuses."""
+    from agent.solver import solve, solve_maximal, CreditLimit
+    # canonical book, A is sole net payer (owes C 40, B 30). Cap A->C at 20.
+    book = [Obligation("A", "B", 100.0), Obligation("B", "C", 100.0),
+            Obligation("C", "A", 80.0), Obligation("A", "C", 50.0),
+            Obligation("C", "B", 30.0)]
+    cap = [CreditLimit("A", "C", 20.0)]
+    # solve() refuses (its residual model only allows payer->receiver arcs)
+    assert not solve(book, cap).feasible
+    # solve_maximal reroutes A->B->C and settles everything within the cap
+    r = solve_maximal(book, cap)
+    assert r.feasible and not r.deferred_obligations, \
+        f"should reroute, not defer: deferred={r.deferred_obligations}"
+    a_to_c = sum(t.amount for t in r.transfers if t.sender == "A" and t.receiver == "C")
+    assert a_to_c <= 20.0 + 1e-6, f"A->C {a_to_c} must respect the cap"
+    print(f"test_maximal_reroutes_before_deferring PASSED — whole book settled via "
+          f"transshipment, A->C held to {a_to_c} (cap 20), 0 deferred")
+
+
+def test_maximal_degrades_instead_of_refusing():
+    """THE PRODUCT BEHAVIOUR: when caps make even a reroute impossible, solve_maximal
+    settles the max-value feasible SUBSET and DEFERS the rest with a reason — it never
+    hard-fails. Here C is the sole receiver of two obligations and BOTH its inbound arcs
+    are capped below what it's owed, so no reroute exists; the rail must defer."""
+    from agent.solver import solve, solve_maximal, CreditLimit
+    book = [Obligation("A", "C", 30.0), Obligation("B", "C", 25.0)]
+    caps = [CreditLimit("A", "C", 30.0), CreditLimit("B", "C", 20.0)]
+    # both settled => C owed 55, max inbound 30+20=50 < 55 => infeasible whole-book
+    assert not solve(book, caps).feasible
+    r = solve_maximal(book, caps)
+    assert r.feasible, "maximal never hard-fails"
+    # only feasible non-empty subset is {A->C 30} (B->C 25 alone exceeds its 20 cap)
+    assert r.settled_obligations == [0], r.settled_obligations
+    assert r.deferred_obligations == [1], r.deferred_obligations
+    assert abs(r.settled_value - 30.0) < 0.01 and abs(r.deferred_value - 25.0) < 0.01
+    assert r.deferral_reasons, "must explain why it deferred"
+    print(f"test_maximal_degrades_instead_of_refusing PASSED — "
+          f"settled 30 ({r.settlement_rate_pct}% of value), deferred 25; "
+          f"reason: {r.deferral_reasons[0]}")
+
+
+def test_maximal_settled_subset_conserves():
+    """The settled subset must itself conserve value per party (so the on-ledger guard,
+    which checks conservation over exactly the batch, accepts it)."""
+    from agent.solver import solve_maximal, CreditLimit
+    book = [Obligation("A", "C", 60.0), Obligation("B", "D", 40.0),
+            Obligation("A", "D", 10.0), Obligation("B", "C", 20.0)]
+    r = solve_maximal(book, [CreditLimit("A", "C", 30.0)])
+    # reconstruct net of the SETTLED obligations and confirm residual reproduces it
+    settled = [book[i] for i in r.settled_obligations]
+    net = {}
+    for o in settled:
+        net[o.payer] = net.get(o.payer, 0.0) - o.amount
+        net[o.payee] = net.get(o.payee, 0.0) + o.amount
+    res_net = {}
+    for t in r.transfers:
+        res_net[t.sender] = res_net.get(t.sender, 0.0) - t.amount
+        res_net[t.receiver] = res_net.get(t.receiver, 0.0) + t.amount
+    for p in set(net) | set(res_net):
+        assert abs(net.get(p, 0.0) - res_net.get(p, 0.0)) < 0.01, \
+            f"settled subset must conserve for {p}: net={net.get(p,0)} res={res_net.get(p,0)}"
+    print(f"test_maximal_settled_subset_conserves PASSED — settled subset conserves per-party")
+
+
 if __name__ == "__main__":
     test_unconstrained_matches_canonical()
     test_multi_currency_independent()
@@ -208,4 +290,8 @@ if __name__ == "__main__":
     test_fx_missing_rate_infeasible()
     test_liquidity_floor_constraint()
     test_liquidity_floor_satisfiable()
+    test_maximal_whole_book_when_feasible()
+    test_maximal_reroutes_before_deferring()
+    test_maximal_degrades_instead_of_refusing()
+    test_maximal_settled_subset_conserves()
     print("\nALL SOLVER TESTS PASSED")

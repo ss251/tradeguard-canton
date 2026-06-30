@@ -102,6 +102,14 @@ class SolveResult:
     # populated when infeasible: human-readable binding constraint(s)
     binding_constraints: list[str] = field(default_factory=list)
     rationale: list[str] = field(default_factory=list)
+    # --- maximal-feasible-netting fields (graceful degradation) ---
+    # indices (into the input obligation list) settled now vs deferred to next cycle
+    settled_obligations: list[int] = field(default_factory=list)
+    deferred_obligations: list[int] = field(default_factory=list)
+    settled_value: float = 0.0
+    deferred_value: float = 0.0
+    # why each deferral happened (binding constraint per deferred party/pair)
+    deferral_reasons: list[str] = field(default_factory=list)
 
     @property
     def netting_efficiency_pct(self) -> float:
@@ -109,6 +117,15 @@ class SolveResult:
             return 0.0
         return round((self.gross_obligations - self.gross_residual)
                      / self.gross_obligations * 100, 1)
+
+    @property
+    def settlement_rate_pct(self) -> float:
+        """Fraction of obligation VALUE settled now (vs deferred). 100% when the whole
+        book is feasible; lower when constraints force a partial settle."""
+        total = self.settled_value + self.deferred_value
+        if total <= 0:
+            return 100.0 if not self.deferred_obligations else 0.0
+        return round(self.settled_value / total * 100, 1)
 
 
 def _by_currency(obligations: list[Obligation]) -> dict[str, list[Obligation]]:
@@ -294,6 +311,184 @@ def solve(
             "this is the limits doing their job — relax a cap or add a counterparty",
         ]
     return result
+
+
+def solve_maximal(
+    obligations: list[Obligation],
+    limits: list[CreditLimit] | None = None,
+    objective_weights: dict[tuple[str, str], float] | None = None,
+) -> SolveResult:
+    """MAXIMAL FEASIBLE NETTING — the product behaviour, not the demo behaviour.
+
+    `solve()` is binary: it settles the WHOLE book or, if a credit limit binds, it
+    refuses everything. A real netting rail never does that — it settles the
+    maximum-value subset that fits the constraints NOW and DEFERS the rest to the
+    next cycle (this is what CLS and every production multilateral system do).
+
+    This solves, per currency, a MILP:
+      pick a subset S of obligations to settle now (binary z[o] per obligation),
+      MAXIMISE the settled value, subject to:
+        * the residual flow of the SETTLED subset conserves value per party, and
+        * respects every on-ledger credit limit.
+    Deferred obligations simply stay live for the next window. The on-ledger
+    SettleNetting guard already checks conservation over exactly the obligations in
+    the batch, so settling a subset is sound today — no Daml change required.
+
+    It can never "fail": worst case it defers everything (z=0, settles nothing) and
+    reports why. When the whole book fits, every z=1 and it reduces to `solve()`.
+    """
+    limits = limits or []
+    objective_weights = objective_weights or {}
+
+    result = SolveResult(feasible=True)
+    result.gross_obligations = round(sum(o.amount for o in obligations), 2)
+
+    per_ccy: dict[str, list[int]] = {}
+    for i, o in enumerate(obligations):
+        per_ccy.setdefault(o.instrument, []).append(i)
+
+    all_transfers: list[SolvedTransfer] = []
+    settled_idx: list[int] = []
+    deferred_idx: list[int] = []
+    reasons: list[str] = []
+
+    for currency, idxs in sorted(per_ccy.items()):
+        c_settled, c_deferred, transfers, net, c_reasons = _solve_one_currency_maximal(
+            currency, obligations, idxs, limits, objective_weights)
+        result.net_positions[currency] = {p: round(v, 2) for p, v in net.items()}
+        settled_idx.extend(c_settled)
+        deferred_idx.extend(c_deferred)
+        all_transfers.extend(transfers)
+        reasons.extend(c_reasons)
+
+    result.transfers = all_transfers
+    result.gross_residual = round(sum(t.amount for t in all_transfers), 2)
+    result.settled_obligations = sorted(settled_idx)
+    result.deferred_obligations = sorted(deferred_idx)
+    result.settled_value = round(sum(obligations[i].amount for i in settled_idx), 2)
+    result.deferred_value = round(sum(obligations[i].amount for i in deferred_idx), 2)
+    result.deferral_reasons = reasons
+    result.objective_value = result.settled_value
+    # "feasible" here means: we could settle at least something (always true unless
+    # the book was empty). The product never hard-fails; it degrades.
+    result.feasible = True
+
+    if not deferred_idx:
+        result.rationale = [
+            f"{len(obligations)} obligations ({result.gross_obligations} gross) — "
+            f"the WHOLE book is settleable under the current limits",
+            f"netted to {len(all_transfers)} residual transfer(s) totaling "
+            f"{result.gross_residual} ({result.netting_efficiency_pct}% netted out)",
+            "100% settled now; nothing deferred",
+        ]
+    else:
+        result.rationale = [
+            f"PARTIAL SETTLE (graceful degradation): {len(settled_idx)} of "
+            f"{len(obligations)} obligations settle now "
+            f"({result.settlement_rate_pct}% of value), "
+            f"{len(deferred_idx)} deferred to the next cycle",
+            f"settled {result.settled_value} now; deferred {result.deferred_value} "
+            f"(blocked by credit limits, not lost)",
+            *[f"deferred: {r}" for r in reasons],
+            "the rail settles what it can and keeps the rest live — it never just refuses",
+        ]
+    return result
+
+
+def _solve_one_currency_maximal(
+    currency: str,
+    obligations: list[Obligation],
+    idxs: list[int],
+    limits: list[CreditLimit],
+    objective_weights: dict[tuple[str, str], float],
+) -> tuple[list[int], list[int], list[SolvedTransfer], dict[str, float], list[str]]:
+    """Per-currency MILP: choose the max-value subset of `idxs` to settle now.
+
+    Returns (settled_idx, deferred_idx, transfers, net_of_settled, deferral_reasons).
+    """
+    obls = [obligations[i] for i in idxs]
+    parties = sorted({o.payer for o in obls} | {o.payee for o in obls})
+
+    prob = pulp.LpProblem(f"maxnet_{currency}", pulp.LpMaximize)
+
+    # z[k] = 1 if obligation idxs[k] is settled this cycle, 0 if deferred
+    z = {k: pulp.LpVariable(f"z_{idxs[k]}", cat="Binary") for k in range(len(obls))}
+    # residual flow between every ordered party pair (settled subset only)
+    x = {(p, q): pulp.LpVariable(f"x_{p}_{q}", lowBound=0)
+         for p in parties for q in parties if p != q}
+
+    # objective: maximise settled value, with a tiny penalty on gross residual flow
+    # so that among equal-value solutions we still prefer the tightest netting, and
+    # honour any policy weights (a discouraged arc costs more, nudging deferral there).
+    BIG = sum(o.amount for o in obls) + 1.0
+    prob += (
+        BIG * pulp.lpSum(z[k] * obls[k].amount for k in range(len(obls)))
+        - pulp.lpSum((1.0 + objective_weights.get((p, q), 0.0)) * x[(p, q)]
+                     for p in parties for q in parties if p != q)
+    )
+
+    # conservation over the SETTLED subset: for each party, net inflow of settled
+    # obligations must equal net residual flow. net_settled[p] = sum(settled owed to p)
+    # - sum(settled p owes). residual: (received) - (sent) must equal that.
+    for p in parties:
+        settled_net = pulp.lpSum(
+            z[k] * obls[k].amount for k in range(len(obls)) if obls[k].payee == p
+        ) - pulp.lpSum(
+            z[k] * obls[k].amount for k in range(len(obls)) if obls[k].payer == p
+        )
+        residual_net = (pulp.lpSum(x[(o, p)] for o in parties if o != p)
+                        - pulp.lpSum(x[(p, o)] for o in parties if o != p))
+        prob += (residual_net == settled_net, f"conserve_{p}")
+
+    # credit limits on residual arcs
+    capped: dict[tuple[str, str], float] = {}
+    for cl in limits:
+        if cl.currency == currency and (cl.frm, cl.to) in x:
+            capped[(cl.frm, cl.to)] = cl.limit
+            prob += (x[(cl.frm, cl.to)] <= cl.limit, f"limit_{cl.frm}_{cl.to}")
+
+    prob.solve(pulp.PULP_CBC_CMD(msg=False))
+
+    settled_idx, deferred_idx = [], []
+    for k in range(len(obls)):
+        if (z[k].value() or 0) > 0.5:
+            settled_idx.append(idxs[k])
+        else:
+            deferred_idx.append(idxs[k])
+
+    transfers: list[SolvedTransfer] = []
+    for (p, q), var in x.items():
+        amt = round(var.value() or 0.0, 2)
+        if amt > EPS:
+            transfers.append(SolvedTransfer(sender=p, receiver=q, amount=amt,
+                                            currency=currency))
+    transfers.sort(key=lambda t: (-t.amount, t.sender, t.receiver))
+
+    # net of the settled subset (for reporting / UI)
+    net: dict[str, float] = {p: 0.0 for p in parties}
+    for k in range(len(obls)):
+        if idxs[k] in settled_idx:
+            net[obls[k].payee] = net.get(obls[k].payee, 0.0) + obls[k].amount
+            net[obls[k].payer] = net.get(obls[k].payer, 0.0) - obls[k].amount
+
+    reasons = []
+    if deferred_idx:
+        # explain which receiver's inbound cap forced the deferral
+        for q in parties:
+            has_uncapped = any((p, q) not in capped for p in parties if p != q)
+            if has_uncapped:
+                continue
+            cap = round(sum(capped[(p, q)] for p in parties
+                            if p != q and (p, q) in capped), 2)
+            owed_full = round(sum(o.amount for o in obls if o.payee == q), 2)
+            if cap + EPS < owed_full:
+                reasons.append(
+                    f"{q}'s inbound credit limits total {cap:g} {currency} but the full "
+                    f"book would owe it {owed_full:g} — excess deferred")
+        if not reasons:
+            reasons.append(f"{len(deferred_idx)} obligation(s) in {currency} deferred "
+                           f"to keep the settled subset within the credit limits")
+    return settled_idx, deferred_idx, transfers, net, reasons
 
 
 def solve_fx(
