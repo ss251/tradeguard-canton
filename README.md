@@ -21,21 +21,37 @@ _Scope note: TradeGuard automates the **settlement and netting layer** of trade 
 
 ---
 
+## Phase 2 — the full product (policy → constrained plan → ledger-enforced settle)
+
+The headline above is the core. Phase 2 makes it a product a risk officer can actually operate, with the risk constraints living **on the ledger** rather than in the agent's head:
+
+- **Steer in plain English** — a risk officer types a policy ("cap what FirmA owes FirmC at 20 USD"); an LLM translates it to *validated structured constraints* (real `claude` CLI with a JSON schema, deterministic rules fallback). Garbage degrades to `invalid` — the LLM can never fabricate a plan, and it can't talk past the solver or the on-ledger guards.
+- **A real optimizer, not a greedy heuristic** — the agent's plan comes from an LP solver (PuLP/CBC) that minimizes residual flow under the constraints. A binding limit forces a genuine *reroute*; an over-tight one returns the *binding constraint* and the agent **refuses to settle** rather than forcing a bad plan.
+- **Credit limits, on the ledger** — a fintech's exposure cap (`CreditLimit`) is a signed on-ledger contract. The **same** limit the solver respects is carried into the settle transaction, so the ledger rejects any plan that breaches it — the operator cannot settle around a firm's own risk constraint.
+- **Trustless cross-currency netting** — the FX rate is a **co-signed on-ledger contract** (`FXRate`, signed by *every* relying party). A EUR debt nets against a USD debt only at a rate all parties agreed to — the operator cannot pick it. Settlement then conserves **value** at that rate. *(Live: 4 mixed-currency obligations net by value at 1 EUR = 1.2 USD → 2 USD residuals, all discharged atomically; an FX rate not signed by all parties is rejected by the ledger.)*
+- **Liquidity floors, on the ledger** — a neobank's minimum operating balance (`LiquidityFloor`) is enforced on-ledger: a netting plan that would drain a firm below its floor is rejected.
+
+> **The one-line thesis:** *the agent proposes, a human disposes, the ledger settles atomically — or refuses with the binding reason.* Nothing the agent (or the LLM) says can move value past the on-ledger guards.
+
+---
+
 ## What's in the box
 
 | Path | What |
 |------|------|
-| `tradeguard-v3/main/daml/TradeGuard/Netting.daml` | **Private multilateral netting** — Obligation + NettingBatch w/ on-ledger adversarial guards. |
+| `tradeguard-v3/main/daml/TradeGuard/Netting.daml` | **Private multilateral netting** — Obligation + NettingBatch w/ on-ledger adversarial guards, `CreditLimit`, co-signed `FXRate` (value conservation), `LiquidityFloor`. |
 | `tradeguard/daml/` | Institution-grade Daml model (daml-finance v4 patterns): Holdings, Instruments, atomic batch settlement, attestation gating. |
-| `tradeguard-v3/` | Canton 3.x (DPM/SDK 3.4.11) keyless port — the **real-network deploy target**. |
-| `tradeguard/daml/TradeGuard/Test/` | 14 Daml Script tests — netting (3), happy path, privacy, atomicity, exception, attestation, reject. |
-| `agent/` | The off-chain reasoning agent (Python): `ledger_client`, `reasoner`, `netting`, `cli`. |
-| `ui/` | Live role-based UI (`live.html` + `ui_server.py`) reading the real ledger over the JSON API. |
-| `scripts/` | `run_stack.sh` (bring up the full stack), `demo.sh` (run the whole story), `linear_post.py`. |
+| `tradeguard-v3/` | Canton 3.x (DPM/SDK 3.4.11) keyless port — the **real-network deploy target** (`tradeguard 1.3.0`). |
+| `tradeguard-v3/test/daml/TradeGuard/Test/` | **20 Daml Script tests** — netting, privacy, atomicity, credit-limit reject, cross-currency FX settle, unsigned-rate reject, value-violation reject, liquidity-floor reject. |
+| `agent/solver.py` | The optimizer — LP (PuLP/CBC) residual-flow netting under credit limits, FX rates (`solve_fx`), and liquidity floors. **11 tests.** |
+| `agent/policy.py` | **NL risk policy → validated constraints** (real `claude` CLI + rules fallback). **10 tests.** |
+| `agent/limits.py` | On-ledger lifecycle for `CreditLimit`, co-signed `FXRate`, `LiquidityFloor` — the single-source-of-truth bridge to the solver. |
+| `agent/` | The off-chain reasoning agent (Python): `real_client`, `net_settle`, `reasoner`, `netting`, `cli`. |
+| `ui/console.html` + `ui/console_server.py` | **Operator Console** — the interactive app you drive the netting workflow from (policy, limits, FX, floors, settle). |
+| `scripts/e2e_phase2.sh` | **One-command live end-to-end** — the full product chain on the real network. |
+| `scripts/` | `run_stack.sh`, `demo.sh`, `demo_real.sh`, `linear_post.py`. |
 | `ARCHITECTURE.md` | Deep architecture + design rationale (authorization model, atomicity, privacy). |
-| `wireframes/` | Hi-fi UI design set (the design system the live UI implements). |
-| `ui/console.html` + `ui/console_server.py` | **Operator Console** — the interactive app you drive the netting workflow from. |
-| `deck/index.html` | The pitch deck (7 slides, netting-first). |
+| `deck/index.html` | The pitch deck (netting-first). |
 
 ---
 
@@ -50,10 +66,21 @@ python3 ui/console_server.py     # -> http://localhost:8090
 
 Then drive the whole workflow from the browser, against the live ledger:
 **Seed book** → **Compute net** (the agent's plan: 360 → 70, 80.6% netted) →
-**Approve & settle** (human-approval gate → atomic on-ledger settlement) →
-**Test: reject fraud** (the ledger rejects a value-violating proposal). The privacy
+**Approve & settle** (human-approval gate → atomic on-ledger settlement). Then exercise
+the Phase 2 surface: type a **Risk Policy** in English and watch the plan go infeasible
+with the binding constraint; seed an **on-ledger Credit Limit** and hit **Test: reject
+credit breach** (the ledger refuses); run **Seed USD+EUR book → Settle cross-currency**
+(trustless FX netting at a co-signed rate); seed a **Liquidity Floor**. The privacy
 panel shows, live and per-party, that each firm sees only its own obligations while only
 the operator sees the whole book.
+
+### One-command end-to-end (the canonical demo)
+
+```bash
+scripts/e2e_phase2.sh    # runs the ENTIRE product chain live, in one go:
+#  seed → constrained net → NL-policy refusal → credit-limit reject →
+#  cross-currency FX settle → liquidity-floor reject. All 6 steps on the real network.
+```
 
 ---
 
@@ -94,8 +121,17 @@ TG_REAL=1 python3 -m agent.cli status    # agent reads the real ledger
 ## Tests
 
 ```bash
-cd tradeguard && daml test          # 11 Daml scripts (ledger logic)
-cd .. && python3 -m agent.test_netting   # 5 netting tests (optimization)
+# Daml ledger logic (20 scripts: netting, privacy, atomicity, credit limits,
+# cross-currency FX at a co-signed rate, unsigned-rate reject, liquidity floors):
+cd tradeguard-v3/test && dpm test
+
+# Python (agent brain), from the repo root, using the project venv:
+.venv/bin/python -m agent.test_solver            # 11 solver tests (netting, limits, FX, floors)
+.venv/bin/python -m agent.test_policy            # 10 policy tests (NL → validated constraints)
+.venv/bin/python -m agent.test_netting           # 5 netting tests
+
+# Live integration (on-ledger limits/FX/floors drive the solver as single source of truth):
+TG_INTEG=1 TG_REAL=1 .venv/bin/python -m agent.test_limits_integration
 ```
 
 ---
@@ -134,9 +170,11 @@ cd .. && python3 -m agent.test_netting   # 5 netting tests (optimization)
 
 ## Status
 
-Built and working **end-to-end, locally** — no dependency on hackathon org access.
-Deploys to the Canton DevNet sandbox (Seaport) as a final config step once the
-party is whitelisted. See `STATUS.md` for the full state and `ARCHITECTURE.md` for
-the deep dive.
+Built and working **end-to-end on a real 3-validator Canton network** (Canton Builder
+LocalNet), not just a sandbox. The full Phase 2 product chain — NL risk policy →
+constrained LP solver → on-ledger credit limits / co-signed FX rates / liquidity floors
+→ human-approved atomic settle (or ledger refusal with the binding reason) — is verified
+live; run `scripts/e2e_phase2.sh` to see all six steps in one go. See `STATUS.md` for the
+full state and `ARCHITECTURE.md` for the deep dive.
 
 _Apache-2.0. Built for the Build on Canton hackathon, June 2026._
