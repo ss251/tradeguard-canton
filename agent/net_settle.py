@@ -263,25 +263,63 @@ def seed_book(dense: bool = True) -> dict:
             created += 1
     return {"ok": created == len(book), "created": created, "total": len(book)}
 
-def settle_real(policy_text: str | None = None) -> dict:
+
+def seed_partial_book() -> dict:
+    """Seed a book that FORCES graceful degradation: FirmC is the sole receiver of two
+    obligations (A->C 30, B->C 25). With inbound caps A->C<=30 and B->C<=20, the full
+    book would owe C 55 but C can receive at most 50 — no reroute exists (C is a pure
+    sink), so maximal netting must settle the feasible subset (A->C 30) and DEFER B->C.
+    Also seeds those two on-ledger CreditLimits. Clears any existing book/limits first.
+    """
+    from agent import limits as limmod
+    parties = load_real_parties()
+    op = RealLedgerClient(parties["operator"])
+    for c in op.query("TradeGuard.Netting:Obligation"):
+        op.exercise("TradeGuard.Netting:Obligation", c["contractId"], "Discharge", {})
+    for c in op.query("TradeGuard.Netting:NettingBatch"):
+        op.exercise("TradeGuard.Netting:NettingBatch", c["contractId"], "CancelNetting",
+                    {"actor": parties["operator"]})
+    limmod.clear_all(parties)
+
+    bank, opp = parties["netbank"], parties["operator"]
+    A, B, C = parties["firma"], parties["firmb"], parties["firmc"]
+    instr = _instr(bank)
+    book = [(A, C, 30.0, "A->C p1"), (B, C, 25.0, "B->C p2")]
+    created = 0
+    for payer, payee, amt, ref in book:
+        r = RealLedgerClient(payer).create(
+            "TradeGuard.Netting:Obligation",
+            {"payer": payer, "payee": payee, "operator": opp,
+             "instrument": instr, "amount": amt, "reference": ref},
+            act_as=[payer, payee])
+        if not _err(r):
+            created += 1
+    l1 = limmod.seed_limit("firma", "firmc", 30.0, "USD", parties)
+    l2 = limmod.seed_limit("firmb", "firmc", 20.0, "USD", parties)
+    return {"ok": created == len(book) and l1.get("ok") and l2.get("ok"),
+            "created": created, "total": len(book),
+            "limits": "A->C<=30, B->C<=20 (book owes C 55, C can take 50 -> defer)"}
+
+
+def settle_real(policy_text: str | None = None, maximal: bool = True) -> dict:
     """Settle the existing seeded book atomically via v2 using the CONSTRAINED SOLVER.
 
+    By default uses MAXIMAL FEASIBLE NETTING (the product behaviour): it settles the
+    maximum-value subset of obligations that fits the on-ledger credit limits NOW and
+    DEFERS the rest to the next cycle — the rail never just refuses. Set maximal=False
+    for the strict all-or-nothing solve (settle the whole book or report infeasible).
+
     The plan is computed by agent.solver under the SAME on-ledger CreditLimits the
-    ledger enforces (single source of truth), optionally steered by a natural-language
-    policy. If the constraints make settlement infeasible, returns the binding
-    constraint instead of forcing a settle. Fast (~2-3s) when feasible.
+    ledger enforces (single source of truth), optionally steered by an NL policy.
     """
     parties = load_real_parties()
     bank = parties["netbank"]
     operator = parties["operator"]
-    facts_raw = _book_facts(parties)
-    if not facts_raw:
-        return {"ok": False, "error": "no seeded book to settle"}
 
     short2full = {_short(parties[k]): parties[k] for k in _present_firms(parties)}
 
     # the off-chain brain: solver under the live on-ledger limits + optional policy
-    from agent.solver import solve, Obligation as SObl
+    from agent.solver import solve, solve_maximal, Obligation as SObl
     from agent import limits as limmod
     ledger_limits = limmod.load_limits(parties)
     solver_limits = limmod.to_solver_limits(ledger_limits)
@@ -291,7 +329,7 @@ def settle_real(policy_text: str | None = None) -> dict:
     if policy_text:
         from agent.policy import PolicyContext, parse_policy
         ctx = PolicyContext(parties=sorted(short2full.keys()),
-                            currencies=sorted({f[2] if len(f) > 3 else "USD" for f in []} | {"USD"}))
+                            currencies=["USD"])
         pol = parse_policy(policy_text, ctx)
         policy_info = pol.to_dict()
         if not pol.valid:
@@ -301,14 +339,34 @@ def settle_real(policy_text: str | None = None) -> dict:
         # still only enforces what's actually been seeded on-chain).
         solver_limits = solver_limits + pol_limits
 
+    # query the obligations ONCE so the solver's indices align with the on-ledger cids
+    op = RealLedgerClient(operator)
+    obl_rows = op.query("TradeGuard.Netting:Obligation")
+    if not obl_rows:
+        return {"ok": False, "error": "no seeded book to settle"}
+    # facts_raw aligned 1:1 with obl_rows by index
+    facts_raw = [(c["payload"]["payer"], c["payload"]["payee"], float(c["payload"]["amount"]))
+                 for c in obl_rows]
+
     obs = [SObl(payer=_short(p), payee=_short(q), amount=a, instrument="USD")
            for (p, q, a) in facts_raw]
-    plan = solve(obs, solver_limits, weights)
-    if not plan.feasible:
-        return {"ok": False, "infeasible": True,
-                "binding_constraints": plan.binding_constraints,
-                "rationale": plan.rationale,
-                "policy": policy_info}
+
+    if maximal:
+        plan = solve_maximal(obs, solver_limits, weights)
+        settle_set = set(plan.settled_obligations)
+        if not settle_set:
+            # nothing can settle this cycle — report, don't crash
+            return {"ok": False, "infeasible": True, "settled": 0,
+                    "deferred": len(obl_rows),
+                    "deferral_reasons": plan.deferral_reasons,
+                    "rationale": plan.rationale, "policy": policy_info}
+    else:
+        plan = solve(obs, solver_limits, weights)
+        if not plan.feasible:
+            return {"ok": False, "infeasible": True,
+                    "binding_constraints": plan.binding_constraints,
+                    "rationale": plan.rationale, "policy": policy_info}
+        settle_set = set(range(len(obl_rows)))
 
     residuals = [(short2full[t.sender], short2full[t.receiver], t.amount)
                  for t in plan.transfers]
@@ -322,22 +380,20 @@ def settle_real(policy_text: str | None = None) -> dict:
         auth_cid = next(a["contractId"] for a in RealLedgerClient(bank).query("TradeGuard.Settlement:SettlementAuthority")
                         if a["payload"]["coordinator"] == operator)
 
-    # ensure cash accounts for every involved firm
-    involved = set()
-    for (p, q, a) in facts_raw:
-        involved.add(p); involved.add(q)
+    # only the SETTLED obligations go into the batch (deferred ones stay live on-ledger)
+    settled_rows = [obl_rows[i] for i in sorted(settle_set)]
+    obl_cids = [c["contractId"] for c in settled_rows]
+    obl_facts = [{"sender": c["payload"]["payer"], "receiver": c["payload"]["payee"],
+                  "amount": c["payload"]["amount"],
+                  "currency": c["payload"]["instrument"]["id"]["unpack"]} for c in settled_rows]
 
+    # ensure cash accounts for every firm involved in the SETTLED residuals
+    involved = set()
+    for (p, q, a) in [(facts_raw[i][0], facts_raw[i][1], facts_raw[i][2]) for i in settle_set]:
+        involved.add(p); involved.add(q)
     short2key = {parties[k]: k for k in _present_firms(parties)}
     for party in involved:
         _ensure_account(parties, bank, party, ACC[short2key[party]])
-
-    # obligation cids + facts (NetTransfer encoding: sender/receiver/amount/currency)
-    op = RealLedgerClient(operator)
-    obl_rows = op.query("TradeGuard.Netting:Obligation")
-    obl_cids = [c["contractId"] for c in obl_rows]
-    obl_facts = [{"sender": c["payload"]["payer"], "receiver": c["payload"]["payee"],
-                  "amount": c["payload"]["amount"],
-                  "currency": c["payload"]["instrument"]["id"]["unpack"]} for c in obl_rows]
 
     legs, allocs = _residual_legs_and_allocs(parties, bank, operator, instr_cid, residuals, auth_cid)
 
@@ -364,10 +420,19 @@ def settle_real(policy_text: str | None = None) -> dict:
         return {"ok": False, "error": f"settle failed: {e}"}
     gross = round(sum(a for (_, _, a) in facts_raw), 2)
     net = round(sum(t.amount for t in plan.transfers), 2)
+    settled_gross = round(sum(facts_raw[i][2] for i in settle_set), 2)
+    deferred = sorted(set(range(len(obl_rows))) - settle_set)
     return {"ok": True, "gross": gross, "net": net,
             "discharged": len(obl_cids), "residuals": len(residuals),
             "efficiency_pct": plan.netting_efficiency_pct,
             "credit_limits_enforced": len(cl_cids),
+            "maximal": maximal,
+            "settled_obligations": len(settle_set),
+            "deferred_obligations": len(deferred),
+            "settled_gross": settled_gross,
+            "deferred_gross": round(gross - settled_gross, 2),
+            "settlement_rate_pct": getattr(plan, "settlement_rate_pct", 100.0),
+            "deferral_reasons": getattr(plan, "deferral_reasons", []),
             "policy": policy_info}
 
 
