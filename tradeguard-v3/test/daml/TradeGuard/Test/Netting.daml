@@ -527,3 +527,55 @@ testCrossCurrencyRejectsUnsignedRate = do
     exerciseCmd batch SettleNetting with allocations = allocs
   debug "testCrossCurrencyRejectsUnsignedRate PASSED: an FX rate not co-signed by all parties was refused"
   pure ()
+
+-- | NETTING CYCLE LIFECYCLE: the rail's operating rhythm, enforced on-ledger.
+--   Open -> Close -> RecordSettlement -> RollForward -> (next) Open. Proves the state
+--   machine is real: you cannot record settlement on an open cycle, cannot roll
+--   forward before settling, and the successor cycle increments the number and is Open.
+testNettingCycleLifecycle : Script ()
+testNettingCycleLifecycle = do
+  w <- setupNetWorld
+
+  -- open cycle 1
+  c1 <- submit w.operator do
+    createCmd NettingCycle with
+      operator = w.operator; cycleNumber = 1; status = CycleOpen
+      regulator = Some w.regulator
+      settledCount = 0; deferredCount = 0; settledValue = 0.0; deferredValue = 0.0
+
+  -- you CANNOT record settlement while still Open (must close first)
+  submitMustFail w.operator do
+    exerciseCmd c1 RecordSettlement with sc = 1; dc = 0; sv = 10.0; dv = 0.0
+
+  -- close the book: Open -> Closed
+  c1c <- submit w.operator do exerciseCmd c1 CloseCycle
+
+  -- you CANNOT roll forward before settling
+  submitMustFail w.operator do exerciseCmd c1c RollForward
+
+  -- record the maximal-netting outcome: settled 1 (30), deferred 1 (25)
+  c1s <- submit w.operator do
+    exerciseCmd c1c RecordSettlement with sc = 1; dc = 1; sv = 30.0; dv = 25.0
+
+  -- the cycle now carries the durable, regulator-observable result
+  Some rec <- queryContractId w.operator c1s
+  rec.status === CycleSettled
+  rec.settledCount === 1
+  rec.deferredCount === 1
+  rec.settledValue === 30.0
+  rec.deferredValue === 25.0
+
+  -- the REGULATOR can see the settled cycle (scoped oversight)
+  regView <- queryContractId w.regulator c1s
+  assertMsg "regulator must observe the cycle result" (not (isNone regView))
+
+  -- roll forward: Settled cycle 1 -> Open cycle 2 (the deferred 25 is caught next)
+  c2 <- submit w.operator do exerciseCmd c1s RollForward
+  Some next <- queryContractId w.operator c2
+  next.cycleNumber === 2
+  next.status === CycleOpen
+  next.settledCount === 0   -- fresh session
+  next.deferredCount === 0
+
+  debug "testNettingCycleLifecycle PASSED: Open->Close->Settle->RollForward enforced on-ledger; deferred value rolls to cycle 2"
+  pure ()

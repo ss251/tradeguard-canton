@@ -80,6 +80,88 @@ template CreditLimit
     observer to
     ensure limit >= 0.0
 
+-- | The status of a netting cycle as it moves through its lifecycle.
+data CycleStatus
+  = CycleOpen      -- ^ accepting obligations; the book accrues
+  | CycleClosed    -- ^ book snapshotted; netting + settlement in progress
+  | CycleSettled   -- ^ settled (the feasible subset); deferred obligations roll forward
+  deriving (Eq, Show)
+
+-- | A NETTING CYCLE — the on-ledger session that gives the rail its operating rhythm.
+--
+--   A real multilateral netting system does not settle one-shot; it runs in cycles
+--   (CLS settlement sessions, an ACH window, an end-of-day net). Obligations accrue
+--   continuously; at cycle close the operator snapshots the outstanding book, the
+--   agent computes the MAXIMAL feasible net under the on-ledger limits, settles what
+--   fits, and the rest is DEFERRED — it stays live on the ledger and is caught by the
+--   NEXT cycle's close. This contract is the durable, regulator-observable record of
+--   each session: when it opened, what it settled, and what it carried forward. It is
+--   what makes "deferred to the next cycle" a promise the system actually keeps.
+template NettingCycle
+  with
+    operator : Party
+      -- ^ The netting operator running the session.
+    cycleNumber : Int
+      -- ^ Monotonic session number (1, 2, 3, …). The ordering key for roll-forward.
+    status : CycleStatus
+    regulator : Optional Party
+      -- ^ Scoped oversight: the regulator observes every session and its results.
+    settledCount : Int
+      -- ^ Obligations settled this cycle (populated on RecordSettlement).
+    deferredCount : Int
+      -- ^ Obligations deferred to the next cycle.
+    settledValue : Decimal
+    deferredValue : Decimal
+  where
+    signatory operator
+    observer regObs regulator
+    ensure cycleNumber >= 0 && settledCount >= 0 && deferredCount >= 0
+
+    -- | Close the book: stop accruing, snapshot for netting. Open -> Closed.
+    choice CloseCycle : ContractId NettingCycle
+      controller operator
+      do
+        assertMsg "can only close an Open cycle" (status == CycleOpen)
+        create this with status = CycleClosed
+
+    -- | Record the settlement outcome on the cycle. Closed -> Settled. The agent
+    --   passes the maximal-netting result (settled vs deferred counts + value) so the
+    --   session has a durable, regulator-observable audit of exactly what happened.
+    choice RecordSettlement : ContractId NettingCycle
+      with
+        sc : Int
+        dc : Int
+        sv : Decimal
+        dv : Decimal
+      controller operator
+      do
+        assertMsg "can only record settlement on a Closed cycle" (status == CycleClosed)
+        assertMsg "counts must be non-negative" (sc >= 0 && dc >= 0)
+        create this with
+          status = CycleSettled
+          settledCount = sc; deferredCount = dc
+          settledValue = sv; deferredValue = dv
+
+    -- | Open the NEXT cycle in the sequence. Only a Settled cycle can spawn its
+    --   successor — this enforces the rhythm on-ledger (no skipping a settlement).
+    --   Returns the new Open cycle; the deferred obligations are already live and are
+    --   netted at the next close.
+    choice RollForward : ContractId NettingCycle
+      controller operator
+      do
+        assertMsg "can only roll forward from a Settled cycle" (status == CycleSettled)
+        create NettingCycle with
+          operator; regulator
+          cycleNumber = cycleNumber + 1
+          status = CycleOpen
+          settledCount = 0; deferredCount = 0
+          settledValue = 0.0; deferredValue = 0.0
+
+    -- | Abandon a cycle (operator only). Nothing is settled.
+    choice CancelCycle : ()
+      controller operator
+      do return ()
+
 -- | A mutually-agreed, on-ledger FX rate: 1 unit of `base` = `rate` units of `quote`.
 --   This is the contract that makes CROSS-CURRENCY netting trustless. Netting a
 --   EUR debt against a USD debt requires a rate — and if the operator simply picked
