@@ -107,6 +107,34 @@ def test_liquidity_floor_lifecycle_live():
     print("test_liquidity_floor_lifecycle_live PASSED — cleanup OK")
 
 
+def test_maximal_partial_settle_live():
+    """THE PRODUCT BEHAVIOUR live: a book + caps that force deferral -> settle_real
+    settles the feasible subset and leaves the deferred obligation LIVE on the ledger."""
+    from agent.net_settle import seed_partial_book, settle_real
+    from agent.real_client import RealLedgerClient, load_real_parties
+    seed = seed_partial_book()
+    assert seed["ok"], seed
+    r = settle_real()  # maximal=True by default
+    assert r["ok"], r
+    assert r["settled_obligations"] == 1 and r["deferred_obligations"] == 1, r
+    assert abs(r["settled_gross"] - 30.0) < 0.01 and abs(r["deferred_gross"] - 25.0) < 0.01, r
+    assert r["deferral_reasons"], "must explain the deferral"
+    # the deferred obligation must still be live on the ledger (not lost)
+    p = load_real_parties()
+    live = RealLedgerClient(p["operator"]).query("TradeGuard.Netting:Obligation")
+    assert len(live) == 1 and live[0]["payload"]["reference"] == "B->C p2", \
+        f"deferred B->C must stay live: {[c['payload']['reference'] for c in live]}"
+    print(f"test_maximal_partial_settle_live PASSED — settled 30 ({r['settlement_rate_pct']}%), "
+          f"deferred 25 still live on-ledger; reason: {r['deferral_reasons'][0]}")
+    # cleanup
+    from agent import limits as limmod
+    op = RealLedgerClient(p["operator"])
+    for c in op.query("TradeGuard.Netting:Obligation"):
+        op.exercise("TradeGuard.Netting:Obligation", c["contractId"], "Discharge", {})
+    limmod.clear_all(p)
+    print("test_maximal_partial_settle_live PASSED — cleanup OK")
+
+
 if __name__ == "__main__":
     if os.environ.get("TG_INTEG") != "1":
         print("SKIPPED: set TG_INTEG=1 and TG_REAL=1 to run the live integration test")
@@ -114,4 +142,5 @@ if __name__ == "__main__":
     test_ledger_limits_drive_solver()
     test_fx_lifecycle_live()
     test_liquidity_floor_lifecycle_live()
+    test_maximal_partial_settle_live()
     print("\nALL LIMITS INTEGRATION TESTS PASSED")
