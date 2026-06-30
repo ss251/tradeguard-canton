@@ -218,6 +218,7 @@
 
       <div class="actions">
         <button id="b_seed" class="ghost" onclick="doSeed()">Seed book</button>
+        <button id="b_partial" class="ghost" onclick="seedPartial()">Demo: partial settle</button>
         <button id="b_compute" onclick="doCompute()" disabled>Compute net</button>
         <button id="b_settle" class="green" onclick="openGate()" disabled>Approve &amp; settle</button>
         <button id="b_adv" class="ox" onclick="doAdversarial()">Test: reject fraud</button>
@@ -322,6 +323,14 @@ function renderPlan(plan){
   }
   $('#residuals').innerHTML=plan.residual_transfers.map(t=>
     `<div class="resid">${t.sender} <span class="arrow">→</span> ${t.receiver} &nbsp;<b>${t.amount.toFixed(0)} ${t.currency||'USD'}</b></div>`).join('');
+  // graceful degradation: when constraints force a partial settle, show settled vs deferred
+  if(plan.partial){
+    $('#residuals').innerHTML += `<div class="banner" style="display:block;background:#f5edd6;color:#7a5b00;margin-top:10px">
+      ⚖ PARTIAL SETTLE — ${plan.settlement_rate_pct}% of value settles now; ${plan.deferred_count} obligation(s) deferred to next cycle.<br>
+      <span style="font-size:.82rem">settled: ${(plan.settled_refs||[]).join(', ')||'—'} &nbsp;·&nbsp; deferred: ${(plan.deferred_refs||[]).join(', ')||'—'}</span><br>
+      <span style="font-size:.82rem">${(plan.deferral_reasons||[]).join('; ')}</span><br>
+      <span style="font-size:.8rem;opacity:.8">the rail settles what it can and keeps the rest live — it never just refuses</span></div>`;
+  }
   $('#g_gross').textContent=plan.gross_obligations.toFixed(0);
   $('#g_net').textContent=plan.gross_residual.toFixed(0);
   $('#g_pct').textContent=plan.netting_efficiency_pct+'%';
@@ -360,6 +369,13 @@ async function doSeed(){
     $('#banner').className='banner'; render(d.state);
     toast(d.ok?'Book seeded on-ledger':'seed failed',!d.ok);}
   catch(e){toast('seed error',true);} finally{busy('#b_seed',false);}
+}
+async function seedPartial(){
+  busy('#b_partial',true,'seeding partial-settle demo');
+  try{const r=await fetch('/api/console/seed-partial',{method:'POST'});const d=await r.json();
+    COMPUTED=true; JUST_SETTLED=false; $('#banner').className='banner'; render(d.state);
+    toast(d.ok?'Seeded forcing book + caps — Compute net to see the partial settle':'seed failed',!d.ok);
+  }catch(e){toast('partial seed error',true);} finally{busy('#b_partial',false);}
 }
 async function doCompute(){
   busy('#b_compute',true,'computing');

@@ -34,7 +34,7 @@ sys.path.insert(0, PROJECT)
 
 from agent.real_client import RealLedgerClient, load_real_parties, admin_token  # noqa: E402
 from agent.netting import Obligation  # noqa: E402
-from agent.solver import solve, Obligation as SolverObligation  # noqa: E402
+from agent.solver import solve, solve_maximal, Obligation as SolverObligation  # noqa: E402
 from agent import net_settle  # noqa: E402  (instant v2 settle + live fraud rejection)
 from agent import limits as limmod  # noqa: E402  (on-ledger credit-limit lifecycle)
 from agent.policy import PolicyContext, parse_policy  # noqa: E402
@@ -95,8 +95,11 @@ def _obligations_for(party_key: str, parties: dict) -> list[dict]:
 
 
 def _solver_plan(book: list[dict], parties: dict, policy_text: str | None = None) -> dict | None:
-    """Run the constrained solver over the book under the LIVE on-ledger limits
-    (+ optional NL policy). Returns a JSON-serializable plan, or None if no book."""
+    """Run the MAXIMAL-FEASIBLE solver over the book under the LIVE on-ledger limits
+    (+ optional NL policy). Returns a JSON-serializable plan, or None if no book.
+
+    Uses solve_maximal: settles the max-value subset that fits the constraints and
+    DEFERS the rest (the product behaviour — the rail never just refuses)."""
     if not book:
         return None
     ledger_limits = limmod.load_limits(parties)
@@ -113,7 +116,10 @@ def _solver_plan(book: list[dict], parties: dict, policy_text: str | None = None
             solver_limits = solver_limits + pol_limits
     obs = [SolverObligation(payer=o["payer"], payee=o["payee"], amount=o["amount"],
                             instrument="USD") for o in book]
-    r = solve(obs, solver_limits, weights)
+    r = solve_maximal(obs, solver_limits, weights)
+    # map settled/deferred solver indices back to the book rows (refs) for the UI
+    settled_refs = [book[i].get("ref", f"#{i}") for i in r.settled_obligations]
+    deferred_refs = [book[i].get("ref", f"#{i}") for i in r.deferred_obligations]
     out = {
         "feasible": r.feasible,
         "gross_obligations": r.gross_obligations,
@@ -128,6 +134,16 @@ def _solver_plan(book: list[dict], parties: dict, policy_text: str | None = None
         "rationale": r.rationale,
         "credit_limits": [l.short() for l in ledger_limits],
         "policy": policy_info,
+        # maximal-netting / graceful-degradation surface
+        "settled_count": len(r.settled_obligations),
+        "deferred_count": len(r.deferred_obligations),
+        "settled_value": r.settled_value,
+        "deferred_value": r.deferred_value,
+        "settlement_rate_pct": r.settlement_rate_pct,
+        "settled_refs": settled_refs,
+        "deferred_refs": deferred_refs,
+        "deferral_reasons": r.deferral_reasons,
+        "partial": len(r.deferred_obligations) > 0,
     }
     return out
 
@@ -231,6 +247,12 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/console/seed":
                 # create a dense 12-obligation book via instant v2 creates
                 res = net_settle.seed_book(dense=True)
+                res["state"] = build_state()
+                self._send(200, res)
+            elif u.path == "/api/console/seed-partial":
+                # seed the forcing scenario: a book + caps that require deferral, so the
+                # console shows MAXIMAL netting settle-some / defer-some (graceful degradation)
+                res = net_settle.seed_partial_book()
                 res["state"] = build_state()
                 self._send(200, res)
             elif u.path == "/api/console/compute":
