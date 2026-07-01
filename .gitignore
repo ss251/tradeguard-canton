@@ -11,3 +11,5 @@ agent/__pycache__/
 tradeguard-v3/**/.daml/
 tradeguard-v3/**/*.dar
 .venv/
+tradeguard-v3/devnet-parties.json
+.tradeguard/
