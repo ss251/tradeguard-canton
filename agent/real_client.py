@@ -137,8 +137,10 @@ class RealLedgerClient:
     def _post(self, path: str, body: dict) -> dict:
         req = urllib.request.Request(HOST + path, data=json.dumps(body).encode(),
             method="POST", headers={**self._hdr(), "Content-Type": "application/json"})
+        # DevNet's shared consensus is far slower than LocalNet; give commands room.
+        timeout = 120 if _IS_DEVNET else 40
         try:
-            with urllib.request.urlopen(req, timeout=60) as r:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
                 return json.load(r)
         except urllib.error.HTTPError as e:
             return {"_http_error": e.code, "_body": e.read().decode()[:600]}
