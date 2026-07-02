@@ -121,3 +121,73 @@ testSplitTransfer = do
   aTot === 50.0
   cTot === 20.0
   debug "testSplitTransfer PASSED: partial-value legs split holdings correctly"
+
+-- | TEST 5 (MAXIMAL): a CROSS-TOKEN residual set settles atomically in ONE batch.
+--   Legs span two instruments: USDCx (A->C 30, C->A 30 cyclic) AND WrappedAmulet
+--   (A->B 15, B->A 15 cyclic). All four legs across both tokens settle in one tx.
+testCrossTokenAtomic : Script ()
+testCrossTokenAtomic = do
+  w <- setup
+  -- fund each (sender, instrument) that pays out
+  hAusd <- mint w.registry w.firmA "USDCx" 30.0
+  hCusd <- mint w.registry w.firmC "USDCx" 30.0
+  hAwa  <- mint w.registry w.firmA "WrappedAmulet" 15.0
+  hBwa  <- mint w.registry w.firmB "WrappedAmulet" 15.0
+  let legs =
+        [ NetLeg with sender = w.firmA; receiver = w.firmC; amount = 30.0; instrumentId = "USDCx"
+        , NetLeg with sender = w.firmC; receiver = w.firmA; amount = 30.0; instrumentId = "USDCx"
+        , NetLeg with sender = w.firmA; receiver = w.firmB; amount = 15.0; instrumentId = "WrappedAmulet"
+        , NetLeg with sender = w.firmB; receiver = w.firmA; amount = 15.0; instrumentId = "WrappedAmulet"
+        ]
+  scid <- submit w.registry $ createCmd NettingSettlement with
+    registry = w.registry; settlementRef = "cross"; legs
+    parties = [w.firmA, w.firmB, w.firmC]
+  _ <- submit w.registry $ exerciseCmd scid NettingSettlement_ExecuteMulti with
+    funding =
+      [ FundingRef with sender = w.firmA; instrumentId = "USDCx"; holdingCid = hAusd
+      , FundingRef with sender = w.firmC; instrumentId = "USDCx"; holdingCid = hCusd
+      , FundingRef with sender = w.firmA; instrumentId = "WrappedAmulet"; holdingCid = hAwa
+      , FundingRef with sender = w.firmB; instrumentId = "WrappedAmulet"; holdingCid = hBwa
+      ]
+  -- cyclic in both tokens => everyone holds what they started with, per instrument
+  let bal p inst = do
+        hs <- query @TGHolding p
+        pure (sum [h.amount | (_, h) <- hs, h.owner == p, h.instrumentId == inst])
+  aUsd <- bal w.firmA "USDCx";  aWa <- bal w.firmA "WrappedAmulet"
+  bWa  <- bal w.firmB "WrappedAmulet"; cUsd <- bal w.firmC "USDCx"
+  aUsd === 30.0
+  cUsd === 30.0
+  aWa === 15.0
+  bWa === 15.0
+  debug "testCrossTokenAtomic PASSED: USDCx + WrappedAmulet legs settled in ONE atomic batch"
+
+-- | TEST 6 (MAXIMAL, all-or-nothing): if ANY leg in the cross-token batch is unfundable,
+--   the WHOLE batch rolls back — no token moves in either instrument.
+testCrossTokenAllOrNothing : Script ()
+testCrossTokenAllOrNothing = do
+  w <- setup
+  hAusd <- mint w.registry w.firmA "USDCx" 30.0
+  hCusd <- mint w.registry w.firmC "USDCx" 30.0
+  hAwa  <- mint w.registry w.firmA "WrappedAmulet" 5.0   -- only 5, but owes 15 => unfundable
+  hBwa  <- mint w.registry w.firmB "WrappedAmulet" 15.0
+  let legs =
+        [ NetLeg with sender = w.firmA; receiver = w.firmC; amount = 30.0; instrumentId = "USDCx"
+        , NetLeg with sender = w.firmC; receiver = w.firmA; amount = 30.0; instrumentId = "USDCx"
+        , NetLeg with sender = w.firmA; receiver = w.firmB; amount = 15.0; instrumentId = "WrappedAmulet"
+        , NetLeg with sender = w.firmB; receiver = w.firmA; amount = 15.0; instrumentId = "WrappedAmulet"
+        ]
+  scid <- submit w.registry $ createCmd NettingSettlement with
+    registry = w.registry; settlementRef = "cross-fail"; legs
+    parties = [w.firmA, w.firmB, w.firmC]
+  _ <- submitMustFail w.registry $ exerciseCmd scid NettingSettlement_ExecuteMulti with
+    funding =
+      [ FundingRef with sender = w.firmA; instrumentId = "USDCx"; holdingCid = hAusd
+      , FundingRef with sender = w.firmC; instrumentId = "USDCx"; holdingCid = hCusd
+      , FundingRef with sender = w.firmA; instrumentId = "WrappedAmulet"; holdingCid = hAwa
+      , FundingRef with sender = w.firmB; instrumentId = "WrappedAmulet"; holdingCid = hBwa
+      ]
+  -- nothing moved in EITHER instrument: A still holds its original USDCx 30
+  hs <- query @TGHolding w.firmA
+  let aUsd = sum [h.amount | (_, h) <- hs, h.owner == w.firmA, h.instrumentId == "USDCx"]
+  aUsd === 30.0
+  debug "testCrossTokenAllOrNothing PASSED: one unfundable leg rolled back the whole cross-token batch"

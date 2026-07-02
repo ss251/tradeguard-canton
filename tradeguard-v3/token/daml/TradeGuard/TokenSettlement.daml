@@ -14,7 +14,7 @@
 module TradeGuard.TokenSettlement where
 
 import DA.Optional (isNone)
-import DA.List (sort)
+import DA.List (sort, find)
 import qualified Splice.Api.Token.HoldingV1 as Holding
 import qualified Splice.Api.Token.MetadataV1 as Meta
 
@@ -117,6 +117,16 @@ data NetLeg = NetLeg
     instrumentId : Text
   deriving (Eq, Show)
 
+-- | A funding reference: which TGHolding funds a given sender's outflow in a given
+--   instrument. For a cross-token batch a sender may owe in several instruments, so
+--   funding is keyed by (sender, instrument), not just sender.
+data FundingRef = FundingRef
+  with
+    sender : Party
+    instrumentId : Text
+    holdingCid : ContractId TGHolding
+  deriving (Eq, Show)
+
 -- | Signed net of a party across a set of legs for one instrument (receipts - payments).
 --   Exposed for the settlement report / off-ledger reconciliation.
 legNet : Text -> Party -> [NetLeg] -> Decimal
@@ -127,6 +137,10 @@ legNet inst p legs =
 -- | Distinct parties preserving first-seen order.
 dedupParties : [Party] -> [Party]
 dedupParties = foldr (\x acc -> if x `elem` acc then acc else x :: acc) []
+
+-- | Distinct (party, instrument) pairs preserving first-seen order.
+dedupPairs : [(Party, Text)] -> [(Party, Text)]
+dedupPairs = foldr (\x acc -> if x `elem` acc then acc else x :: acc) []
 
 -- | fromSome with a message (partial helper used inside a guarded choice).
 fromSomeNote : Text -> Optional a -> a
@@ -208,6 +222,35 @@ template NettingSettlement
     choice NettingSettlement_Cancel : ()
       controller registry
       do pure ()
+
+    -- | CROSS-TOKEN atomic settlement (the CIP-112 flagship pattern). The residual leg set
+    --   may span MULTIPLE instruments (e.g. USDCx and WrappedAmulet). Each (sender,
+    --   instrument) is funded by one TGHolding of that instrument, threaded through all of
+    --   that sender's legs in that instrument. Every leg across every instrument settles in
+    --   ONE transaction — all-or-nothing across tokens (true multi-asset DvP). Value is
+    --   conserved per instrument: nothing is minted, every unit moved is a unit the sender
+    --   held of that exact instrument.
+    choice NettingSettlement_ExecuteMulti : [ContractId TGHolding]
+      with
+        funding : [FundingRef]
+      controller registry
+      do
+        assertMsg "self-transfer leg" (all (\l -> l.sender /= l.receiver) legs)
+        -- one funding holding per distinct (sender, instrument) that must pay out
+        let needed = dedupPairs [(l.sender, l.instrumentId) | l <- legs]
+        let provided = dedupPairs [(f.sender, f.instrumentId) | f <- funding]
+        assertMsg "one funding holding per (sender, instrument)"
+          (sort needed == sort provided && length funding == length provided)
+        -- settle each (sender, instrument) group by threading its holding through its legs
+        moved <- forA needed $ \(s, inst) -> do
+          let fref = fromSomeNote "funding missing for (sender,instrument)"
+                       (find (\f -> f.sender == s && f.instrumentId == inst) funding)
+          h0 <- fetch fref.holdingCid
+          assertMsg "funding holding wrong owner" (h0.owner == s)
+          assertMsg "funding holding wrong instrument" (h0.instrumentId == inst)
+          let myLegs = filter (\l -> l.sender == s && l.instrumentId == inst) legs
+          settleSenderLegs fref.holdingCid myLegs
+        pure (concat moved)
 
 -- | Distinct senders in a leg set, preserving first-seen order.
 settlementSenders : NettingSettlement -> [Party]
