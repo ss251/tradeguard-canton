@@ -263,6 +263,123 @@ def _iter_created(raw: str):
             yield ce
 
 
+# ─────────────────────────────  M2: CROSS-TOKEN DvP  ─────────────────────────────
+# A two-instrument book: obligations denominated in USDCx AND WrappedAmulet. The brain
+# nets PER INSTRUMENT (no cross-instrument netting-at-rate — that would require a co-signed
+# FX rate; here each token nets independently), then the whole residual set settles in ONE
+# atomic cross-token batch via NettingSettlement_ExecuteMulti (the CIP-112 flagship).
+DEMO_BOOK_MULTI = [
+    # (payer, payee, amount, instrument)
+    ("firma", "firmb", 100.0, "USDCx"),
+    ("firmb", "firmc", 60.0, "USDCx"),
+    ("firmc", "firma", 40.0, "USDCx"),
+    ("firma", "firmc", 50.0, "USDCx"),
+    ("firmb", "firma", 30.0, "USDCx"),
+    ("firma", "firmb", 45.0, "WrappedAmulet"),
+    ("firmb", "firmc", 25.0, "WrappedAmulet"),
+    ("firmc", "firma", 20.0, "WrappedAmulet"),
+]
+
+
+def mint_book_multi(book=None) -> dict:
+    """Fund each (party, instrument) with a TGHolding sized to its gross outflow in that
+    instrument, so every residual leg is fundable."""
+    p = load_real_parties()
+    op = RealLedgerClient(p["operator"])
+    book = book or DEMO_BOOK_MULTI
+    out: dict[tuple[str, str], float] = {}
+    for payer, _payee, amt, inst in book:
+        out[(payer, inst)] = out.get((payer, inst), 0.0) + amt
+    minted = {}
+    for (party_key, inst), amount in out.items():
+        r = op.create(f"{TG}:TGHolding", {
+            "registry": p["operator"], "instrumentId": inst,
+            "owner": p[party_key], "amount": amount, "locked": False,
+        }, act_as=[p["operator"], p[party_key]])
+        minted[f"{party_key}/{inst}"] = "ok" if not r.get("_http_error") else r
+    return {"minted": minted}
+
+
+def settle_cross_token(book=None) -> dict:
+    """Net a two-instrument book PER INSTRUMENT, then settle the entire residual set as ONE
+    atomic cross-token batch (NettingSettlement_ExecuteMulti). The maximal tier."""
+    p = load_real_parties()
+    op = RealLedgerClient(p["operator"])
+    book = book or DEMO_BOOK_MULTI
+
+    # group by instrument, run the brain per instrument
+    instruments = []
+    for _s, _r, _a, inst in book:
+        if inst not in instruments:
+            instruments.append(inst)
+
+    all_legs = []
+    report_by_inst = {}
+    for inst in instruments:
+        obls = [Obligation(payer=s, payee=r, amount=a, instrument=inst)
+                for (s, r, a, i) in book if i == inst]
+        rep = netting_report(obls, inst)
+        report_by_inst[inst] = {
+            "gross_value": rep["gross_value"], "net_value": rep["net_value"],
+            "residual_count": rep["residual_count"],
+            "netting_efficiency_pct": rep["netting_efficiency_pct"],
+        }
+        for t in minimal_settlement(obls, inst):
+            all_legs.append({"sender": p[t.sender], "receiver": p[t.receiver],
+                             "amount": t.amount, "instrumentId": inst})
+
+    if not all_legs:
+        return {"ok": True, "note": "book nets to zero", "report_by_instrument": report_by_inst}
+
+    # one funding holding per distinct (sender, instrument)
+    funding = []
+    seen = set()
+    for leg in all_legs:
+        key = (leg["sender"], leg["instrumentId"])
+        if key in seen:
+            continue
+        seen.add(key)
+        hcid = _holding_cid_for(op, leg["sender"], leg["instrumentId"])
+        if not hcid:
+            return {"ok": False, "error": f"no TGHolding to fund {key}; mint first"}
+        funding.append({"sender": leg["sender"], "instrumentId": leg["instrumentId"],
+                        "holdingCid": hcid})
+
+    party_ids = [p[k] for k in ("firma", "firmb", "firmc")]
+    cr = op.create(f"{TG}:NettingSettlement", {
+        "registry": p["operator"], "settlementRef": "cross-token",
+        "legs": all_legs, "parties": party_ids,
+    })
+    if cr.get("_http_error"):
+        return {"ok": False, "error": f"create settlement failed: {cr}"}
+    scid = _created_cid(cr, "NettingSettlement")
+    if not scid:
+        found = op.query(f"{TG}:NettingSettlement")
+        scid = found[-1]["contractId"] if found else None
+    if not scid:
+        return {"ok": False, "error": "could not resolve NettingSettlement cid"}
+
+    # ONE atomic cross-token execution
+    ex = op.exercise(f"{TG}:NettingSettlement", scid, "NettingSettlement_ExecuteMulti",
+                     {"funding": funding})
+    if ex.get("_http_error"):
+        return {"ok": False, "error": f"execute-multi failed: {ex}",
+                "report_by_instrument": report_by_inst}
+
+    total_gross = round(sum(r["gross_value"] for r in report_by_inst.values()), 2)
+    total_net = round(sum(r["net_value"] for r in report_by_inst.values()), 2)
+    return {
+        "ok": True,
+        "instruments": instruments,
+        "report_by_instrument": report_by_inst,
+        "total_gross_all_instruments": total_gross,
+        "total_net_all_instruments": total_net,
+        "leg_count": len(all_legs),
+        "settlement_cid": scid,
+        "atomic": True,
+    }
+
+
 if __name__ == "__main__":
     import json
     print("=== reset ==="); print(clear_tg_holdings(), "contracts archived")
