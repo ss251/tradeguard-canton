@@ -37,6 +37,7 @@ from agent.netting import Obligation  # noqa: E402
 from agent.solver import solve, solve_maximal, Obligation as SolverObligation  # noqa: E402
 from agent import net_settle  # noqa: E402  (instant v2 settle + live fraud rejection)
 from agent import limits as limmod  # noqa: E402  (on-ledger credit-limit lifecycle)
+from agent import token_settle  # noqa: E402  (CIP-56 token-standard settlement, M1+M2)
 from agent.policy import PolicyContext, parse_policy  # noqa: E402
 
 V3_TEST = os.path.join(PROJECT, "tradeguard-v3", "test")
@@ -148,6 +149,29 @@ def _solver_plan(book: list[dict], parties: dict, policy_text: str | None = None
     return out
 
 
+def token_state(parties: dict) -> dict:
+    """CIP-56 token-standard panel: per-instrument balances read through the STANDARD
+    Splice HoldingV1 interface (the proof these are real token-standard holdings)."""
+    inv = {v: k for k, v in parties.items()}
+    out = {"instruments": [], "holdings_total": 0}
+    for inst in ("USDCx", "WrappedAmulet"):
+        try:
+            v = token_settle.verify_via_standard_interface(inst)
+        except Exception:
+            continue
+        if not v.get("ok"):
+            continue
+        bal = {inv.get(k, _short(k)): a for k, a in v.get("balances_by_owner", {}).items()}
+        if v.get("holdings_via_standard_interface", 0) > 0:
+            out["instruments"].append({
+                "instrument": inst,
+                "balances": bal,
+                "holdings": v["holdings_via_standard_interface"],
+            })
+            out["holdings_total"] += v["holdings_via_standard_interface"]
+    return out
+
+
 def build_state(policy_text: str | None = None) -> dict:
     """The full console state: the operator's book, the per-party privacy panel,
     the agent's CONSTRAINED plan (solver under live on-ledger limits), on-ledger
@@ -197,6 +221,7 @@ def build_state(policy_text: str | None = None) -> dict:
         "settled_count": len(settled),
         "open_batches": len(batches),
         "residual_holdings": firm_holdings,
+        "token": token_state(parties),
         "ts": time.strftime("%H:%M:%S"),
     }
 
@@ -313,6 +338,26 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == "/api/console/clear-all":
                 # clear every on-ledger constraint (limits, fx, floors)
                 res = limmod.clear_all()
+                res["state"] = build_state()
+                self._send(200, res)
+            elif u.path == "/api/console/token-seed":
+                # CIP-56: reset token state + mint the two-instrument book
+                # (USDCx + WrappedAmulet TGHoldings implementing the standard interface)
+                token_settle.clear_tg_holdings()
+                res = token_settle.mint_book_multi()
+                res["ok"] = all(v == "ok" for v in res.get("minted", {}).values())
+                res["state"] = build_state()
+                self._send(200, res)
+            elif u.path == "/api/console/token-settle":
+                # CIP-56 M1: net the single-instrument (USDCx) book and settle the
+                # residuals atomically over real token-standard holdings
+                res = token_settle.settle_token()
+                res["state"] = build_state()
+                self._send(200, res)
+            elif u.path == "/api/console/token-settle-cross":
+                # CIP-56 M2 (CIP-112 flagship): net BOTH instruments and settle every
+                # residual leg across BOTH tokens in ONE atomic transaction
+                res = token_settle.settle_cross_token()
                 res["state"] = build_state()
                 self._send(200, res)
             else:

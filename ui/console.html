@@ -193,6 +193,18 @@
       </div>
 
       <div class="card" style="margin-top:18px">
+        <h3>Canton Token Standard <span class="tag">CIP-56 · real Splice HoldingV1</span></h3>
+        <div style="font-family:var(--mono);font-size:.82rem;color:var(--ink2);margin-bottom:8px">TradeGuard's holdings implement the <b>official Canton Network Token Standard interface</b> — any compliant wallet can read them. The netting brain's residuals settle as standard token transfers; the cross-token settle moves <b>two different tokens in ONE atomic transaction</b> (the CIP-112 flagship pattern). Balances below are read <b>through the standard interface</b>, not our own templates.</div>
+        <div id="tokenlist" style="font-family:var(--mono);font-size:.86rem;line-height:1.8;color:var(--ink2)">— no token holdings —</div>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <button class="ghost" onclick="tokenSeed()">Mint USDCx + WrappedAmulet book</button>
+          <button class="green" onclick="tokenSettleCross()">Settle CROSS-TOKEN (atomic)</button>
+          <button class="ghost" onclick="tokenSettleSingle()">Settle USDCx only</button>
+        </div>
+        <div class="banner" id="tokenbanner" style="display:none"></div>
+      </div>
+
+      <div class="card" style="margin-top:18px">
         <h3>On-ledger Liquidity Floors <span class="tag">min balance, enforced</span></h3>
         <div id="floorslist" style="font-family:var(--mono);font-size:.86rem;line-height:1.8;color:var(--ink2)">— none set —</div>
         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
@@ -287,6 +299,7 @@ function render(st){
   $('#s_batches').textContent=st.open_batches;
   $('#s_settled').textContent=(st.residual_holdings!=null?st.residual_holdings:st.settled_count);
   renderLimits(st);
+  renderTokens(st);
   // plan
   if(st.plan && COMPUTED){ renderPlan(st.plan); }
   // pipeline + button enablement
@@ -460,6 +473,46 @@ async function seedFloor(){
   try{const r=await fetch('/api/console/floors',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({party:'firma',floor:50,currency:'USD'})});
     const d=await r.json(); render(d.state); toast(d.ok?'On-ledger liquidity floor seeded ✓':'seed failed',!d.ok);
   }catch(e){toast('floor error',true);}
+}
+
+/* ── Canton Token Standard (CIP-56) ── */
+function renderTokens(st){
+  const el=$('#tokenlist'); const tk=(st&&st.token)||{instruments:[]};
+  if(!tk.instruments.length){ el.innerHTML='— no token holdings —'; return; }
+  el.innerHTML = tk.instruments.map(t=>{
+    const rows=Object.entries(t.balances).map(([p,a])=>`${p}: <b>${(+a).toFixed(0)}</b>`).join(' &nbsp;·&nbsp; ');
+    return `<div><span style="color:var(--ink)"><b>${t.instrument}</b></span> &nbsp;${rows} &nbsp;<span style="opacity:.65">(${t.holdings} holdings via standard interface)</span></div>`;
+  }).join('');
+}
+async function tokenSeed(){
+  const tb=$('#tokenbanner'); tb.style.display='block'; tb.className='banner'; tb.textContent='minting two-instrument book…';
+  try{const r=await fetch('/api/console/token-seed',{method:'POST'});const d=await r.json();
+    render(d.state); tb.className='banner ok';
+    tb.textContent='✓ Minted USDCx + WrappedAmulet TGHoldings (CIP-56 standard interface) sized to each firm\u2019s gross outflow';
+    toast(d.ok?'Token book minted ✓':'mint failed',!d.ok);
+  }catch(e){toast('token seed error',true);}
+}
+async function tokenSettleCross(){
+  const tb=$('#tokenbanner'); tb.style.display='block'; tb.className='banner'; tb.textContent='netting both instruments + settling atomically…';
+  try{const r=await fetch('/api/console/token-settle-cross',{method:'POST'});const d=await r.json();
+    if(d.ok){ render(d.state); tb.className='banner ok';
+      const rep=d.report_by_instrument||{};
+      const per=Object.entries(rep).map(([i,x])=>`${i}: ${x.gross_value}→${x.net_value} (${x.netting_efficiency_pct}%)`).join(' · ');
+      tb.innerHTML='✓ CROSS-TOKEN ATOMIC SETTLE — '+d.leg_count+' residual legs across '+(d.instruments||[]).length+
+        ' tokens settled in ONE transaction.<br><span style="font-size:.82rem">'+per+
+        ' &nbsp;·&nbsp; total '+d.total_gross_all_instruments+'→'+d.total_net_all_instruments+'</span>';
+      toast('✓ Cross-token atomic DvP settled');
+    } else { tb.className='banner rej'; tb.textContent='error: '+(String(d.error||'failed').slice(0,180)); toast('cross-token settle failed',true); }
+  }catch(e){toast('cross-token error',true);}
+}
+async function tokenSettleSingle(){
+  const tb=$('#tokenbanner'); tb.style.display='block'; tb.className='banner'; tb.textContent='netting USDCx + settling…';
+  try{const r=await fetch('/api/console/token-settle',{method:'POST'});const d=await r.json();
+    if(d.ok){ render(d.state); tb.className='banner ok';
+      tb.textContent='✓ USDCx settled over CIP-56 holdings: '+d.gross_value+'→'+d.net_value+' ('+d.netting_efficiency_pct+'% netted), '+d.residual_count+' residual leg(s), atomic';
+      toast('✓ USDCx settled over token standard');
+    } else { tb.className='banner rej'; tb.textContent='error: '+(String(d.error||'failed').slice(0,180)); toast('token settle failed',true); }
+  }catch(e){toast('token settle error',true);}
 }
 async function clearAll(){
   try{const r=await fetch('/api/console/clear-all',{method:'POST'});const d=await r.json();
