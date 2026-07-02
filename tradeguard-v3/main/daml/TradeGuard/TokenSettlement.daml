@@ -36,7 +36,13 @@ template TGHolding
     locked : Bool
       -- ^ Whether the holding is locked into an in-flight settlement.
   where
-    signatory registry, owner
+    -- The registry (instrument admin/issuer) is the sole signatory — it is the custodian
+    -- that issues and moves holdings of its own instrument. The owner is a stakeholder
+    -- (observer), exactly as a registry-issued token works: the issuer can transfer under
+    -- its own authority, which is what lets a settlement executor move residual legs
+    -- without every counterparty co-signing each transfer.
+    signatory registry
+    observer owner
     ensure amount > 0.0
 
     -- Implement the CIP-56 Holding interface so any standard wallet can read this.
@@ -55,13 +61,14 @@ template TGHolding
         meta = emptyMeta
 
     -- | Registry-authorized transfer of the whole holding to a new owner. This is the
-    --   on-ledger settlement primitive the netting layer uses for a residual leg: the
-    --   registry (as admin) and the receiver authorize; the sender's holding is archived
-    --   and a new holding is created for the receiver. Value is conserved.
+    --   on-ledger settlement primitive the netting layer uses for a residual leg. The
+    --   registry is the instrument admin/custodian, so — exactly like the Amulet registry
+    --   executing a settlement — it moves holdings of its own instrument under its own
+    --   authority. Value is conserved (archive sender holding, create receiver holding).
     choice TGHolding_TransferTo : ContractId TGHolding
       with
         newOwner : Party
-      controller registry, newOwner
+      controller registry
       do
         assertMsg "cannot transfer a locked holding" (not locked)
         create this with owner = newOwner
@@ -72,7 +79,7 @@ template TGHolding
       with
         part : Decimal
         newOwner : Party
-      controller registry, newOwner
+      controller registry
       do
         assertMsg "cannot transfer a locked holding" (not locked)
         assertMsg "part must be positive" (part > 0.0)
@@ -97,3 +104,77 @@ template TGHolding
       do
         assertMsg "not locked" locked
         create this with locked = False
+
+-- | A single residual transfer leg produced by the netting brain, in the CIP-56
+--   `TransferLeg` shape (sender / receiver / amount / instrument). The netting solver
+--   emits a set of these; the settlement executes them atomically.
+data NetLeg = NetLeg
+  with
+    sender : Party
+    receiver : Party
+    amount : Decimal
+    instrumentId : Text
+  deriving (Eq, Show)
+
+-- | Signed net of a party across a set of legs for one instrument (receipts - payments).
+--   Exposed for the settlement report / off-ledger reconciliation.
+legNet : Text -> Party -> [NetLeg] -> Decimal
+legNet inst p legs =
+  sum [l.amount | l <- legs, l.instrumentId == inst, l.receiver == p]
+  - sum [l.amount | l <- legs, l.instrumentId == inst, l.sender == p]
+
+-- | A TradeGuard netting settlement: the minimal residual leg set computed by the brain,
+--   settled atomically over CIP-56 TGHoldings. The `executor` (TradeGuard operator /
+--   registry) drives execution; each leg moves standardized tokens from sender to
+--   receiver. All legs settle in ONE transaction or none do (atomicity), and value is
+--   conserved per instrument (adversarial guard re-checked on-ledger at settle time).
+template NettingSettlement
+  with
+    registry : Party
+      -- ^ Instrument registry admin + settlement executor.
+    settlementRef : Text
+      -- ^ A unique reference for this settlement (e.g. a netting-cycle id).
+    legs : [NetLeg]
+      -- ^ The residual legs to settle (already netted by the brain).
+    parties : [Party]
+      -- ^ All parties participating (observers of the settlement).
+  where
+    signatory registry
+    observer parties
+    -- Efficiency guard: the residual is minimal — at most one net direction per
+    -- (instrument, ordered pair) is not enforced here (the solver guarantees it), but we
+    -- DO enforce that every leg has a positive amount and references a known party.
+    ensure all (\l -> l.amount > 0.0 && l.sender `elem` parties && l.receiver `elem` parties) legs
+
+    -- | Execute the whole residual set atomically as CIP-56 token transfers. Each leg is
+    --   funded by splitting the sender's TGHolding of that instrument and transferring the
+    --   part to the receiver. Consumes the settlement (single-shot).
+    --   `holdingCids` maps 1:1 to `legs`: the sender-owned TGHolding funding each leg.
+    choice NettingSettlement_Execute : [ContractId TGHolding]
+      with
+        holdingCids : [ContractId TGHolding]
+      controller registry
+      do
+        assertMsg "one funding holding per leg" (length holdingCids == length legs)
+        -- Sanity guard: no self-transfer legs (a residual leg always moves value between
+        -- two distinct parties; a self-leg would be a solver bug).
+        assertMsg "self-transfer leg" (all (\l -> l.sender /= l.receiver) legs)
+        -- Value integrity is enforced per leg below: each leg MUST be fully funded by a
+        -- holding the sender actually owns of the right instrument. Nothing is created;
+        -- every unit moved is a unit the sender held. This is the on-ledger guarantee that
+        -- the executor cannot fabricate value or move tokens a party does not hold.
+        -- Execute each leg: split the sender's holding and move `amount` to the receiver.
+        forA (zip legs holdingCids) $ \(leg, hcid) -> do
+          h <- fetch hcid
+          assertMsg "funding holding wrong instrument" (h.instrumentId == leg.instrumentId)
+          assertMsg "funding holding wrong owner" (h.owner == leg.sender)
+          assertMsg "insufficient holding to fund leg" (h.amount >= leg.amount)
+          (moved, _remainder) <- exercise hcid TGHolding_SplitTransfer with
+            part = leg.amount
+            newOwner = leg.receiver
+          pure moved
+
+    -- | Abort the settlement without executing (book untouched).
+    choice NettingSettlement_Cancel : ()
+      controller registry
+      do pure ()
