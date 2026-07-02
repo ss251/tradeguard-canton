@@ -70,7 +70,7 @@ testSettleConserves = do
     registry = w.registry; settlementRef = "cycle-1"; legs
     parties = [w.firmA, w.firmB, w.firmC]
   _ <- submit w.registry $ exerciseCmd scid NettingSettlement_Execute with
-    holdingCids = [hA, hC, hB]
+    senderHoldings = [(w.firmA, hA), (w.firmC, hC), (w.firmB, hB)]
   -- after the cyclic settle, every party should again hold 30 USDCx (net zero moves)
   let ownerAmounts p = do
         hs <- query @TGHolding p
@@ -94,7 +94,7 @@ testRejectsUnfundable = do
     registry = w.registry; settlementRef = "unfundable"; legs
     parties = [w.firmA, w.firmB, w.firmC]
   _ <- submitMustFail w.registry $ exerciseCmd scid NettingSettlement_Execute with
-    holdingCids = [hA]
+    senderHoldings = [(w.firmA, hA)]
   debug "testRejectsUnfundable PASSED: under-funded leg refused on-ledger, book untouched"
 
 -- | TEST 4: partial-value transfer via split — A owes C only 20 of a 50 holding.
@@ -112,7 +112,7 @@ testSplitTransfer = do
     registry = w.registry; settlementRef = "split"; legs
     parties = [w.firmA, w.firmC]
   _ <- submit w.registry $ exerciseCmd scid NettingSettlement_Execute with
-    holdingCids = [hA, hC]
+    senderHoldings = [(w.firmA, hA), (w.firmC, hC)]
   -- A: 50 - 20 (split) + 20 (from C) = 50 total across holdings; C: 20 - 20 + 20 = 20
   hsA <- query @TGHolding w.firmA
   hsC <- query @TGHolding w.firmC

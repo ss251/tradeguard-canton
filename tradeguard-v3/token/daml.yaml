@@ -1,5 +1,5 @@
 sdk-version: 3.4.11
-name: tradeguard-test
+name: tradeguard-token
 source: daml
 version: 1.0.0
 build-options:
@@ -7,9 +7,6 @@ build-options:
 dependencies:
   - daml-prim
   - daml-stdlib
-  - daml-script
 data-dependencies:
-  - ../main/.daml/dist/tradeguard-1.5.0.dar
-  - ../token/.daml/dist/tradeguard-token-1.0.0.dar
   - ../../vendor/token-standard/splice-api-token-metadata-v1-1.0.0.dar
   - ../../vendor/token-standard/splice-api-token-holding-v1-1.0.0.dar

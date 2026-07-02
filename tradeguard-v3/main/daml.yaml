@@ -7,6 +7,3 @@ build-options:
 dependencies:
   - daml-prim
   - daml-stdlib
-data-dependencies:
-  - ../../vendor/token-standard/splice-api-token-metadata-v1-1.0.0.dar
-  - ../../vendor/token-standard/splice-api-token-holding-v1-1.0.0.dar

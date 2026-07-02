@@ -132,6 +132,11 @@ class RealLedgerClient:
         return {"Authorization": f"Bearer {_auth_token()}"}
 
     def tid(self, module_entity: str) -> str:
+        # Allow callers to pass a fully-qualified ref with its own package name
+        # (e.g. "#tradeguard-token:TradeGuard.TokenSettlement:TGHolding"); otherwise
+        # default to the core tradeguard package.
+        if module_entity.startswith("#"):
+            return module_entity
         return f"{PKG}:{module_entity}"
 
     def _post(self, path: str, body: dict) -> dict:
@@ -171,7 +176,8 @@ class RealLedgerClient:
             return []
         items = resp if isinstance(resp, list) else resp.get("result", [])
         want = self.tid(module_entity)
-        want_suffix = module_entity
+        # suffix match ignores the package part: compare "Module:Entity"
+        want_suffix = module_entity.split(":", 1)[1] if module_entity.startswith("#") else module_entity
         out = []
         for it in items:
             ce = (it.get("contractEntry", {}).get("JsActiveContract", {})
