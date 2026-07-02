@@ -1,0 +1,99 @@
+-- Copyright (c) 2026 TradeGuard. SPDX-License-Identifier: Apache-2.0
+--
+-- | TradeGuard as a Canton Network Token Standard (CIP-56) registry + settlement app.
+--
+-- This is the settlement layer rebuild: instead of the home-grown TradeGuard.Holding,
+-- TradeGuard registers its own instrument and issues holdings that implement the REAL
+-- CIP-56 `Splice.Api.Token.HoldingV1:Holding` interface. Any compliant wallet can read
+-- TradeGuard holdings via the standard interface, and the netting brain's residual legs
+-- are settled as standard token transfers.
+--
+-- TradeGuard is the `admin` (registry) of its own `TGToken` instrument, so the transfer
+-- executes fully on-ledger via our own registry choices — no dependency on an external
+-- registry HTTP API.
+module TradeGuard.TokenSettlement where
+
+import DA.Optional (isNone)
+import qualified Splice.Api.Token.HoldingV1 as Holding
+import qualified Splice.Api.Token.MetadataV1 as Meta
+
+-- | Empty CIP-56 metadata (no extension keys).
+emptyMeta : Meta.Metadata
+emptyMeta = Meta.Metadata with values = mempty
+
+-- | A TradeGuard-registered token holding that implements the CIP-56 Holding interface.
+--   `registry` is the instrument admin (TradeGuard operator acting as registry app).
+template TGHolding
+  with
+    registry : Party
+      -- ^ The registry app administering this instrument (the InstrumentId.admin).
+    instrumentId : Text
+      -- ^ The instrument identifier within this registry (e.g. "USDCx", "TGUSD").
+    owner : Party
+      -- ^ The holder of the tokens.
+    amount : Decimal
+      -- ^ The size of the holding.
+    locked : Bool
+      -- ^ Whether the holding is locked into an in-flight settlement.
+  where
+    signatory registry, owner
+    ensure amount > 0.0
+
+    -- Implement the CIP-56 Holding interface so any standard wallet can read this.
+    interface instance Holding.Holding for TGHolding where
+      view = Holding.HoldingView with
+        owner
+        instrumentId = Holding.InstrumentId with admin = registry; id = instrumentId
+        amount
+        lock = if locked
+          then Some (Holding.Lock with
+                       holders = [registry]
+                       expiresAt = None
+                       expiresAfter = None
+                       context = Some "TradeGuard settlement")
+          else None
+        meta = emptyMeta
+
+    -- | Registry-authorized transfer of the whole holding to a new owner. This is the
+    --   on-ledger settlement primitive the netting layer uses for a residual leg: the
+    --   registry (as admin) and the receiver authorize; the sender's holding is archived
+    --   and a new holding is created for the receiver. Value is conserved.
+    choice TGHolding_TransferTo : ContractId TGHolding
+      with
+        newOwner : Party
+      controller registry, newOwner
+      do
+        assertMsg "cannot transfer a locked holding" (not locked)
+        create this with owner = newOwner
+
+    -- | Split off `part` to `newOwner`, keeping the remainder. Used when a residual leg
+    --   moves only part of a holding. Both outputs are standard TGHoldings.
+    choice TGHolding_SplitTransfer : (ContractId TGHolding, Optional (ContractId TGHolding))
+      with
+        part : Decimal
+        newOwner : Party
+      controller registry, newOwner
+      do
+        assertMsg "cannot transfer a locked holding" (not locked)
+        assertMsg "part must be positive" (part > 0.0)
+        assertMsg "part must not exceed holding" (part <= amount)
+        moved <- create this with owner = newOwner; amount = part
+        remainder <-
+          if part == amount
+            then pure None
+            else Some <$> create this with amount = amount - part
+        pure (moved, remainder)
+
+    -- | Lock the holding into a settlement (so it can't be double-spent mid-batch).
+    choice TGHolding_Lock : ContractId TGHolding
+      controller registry, owner
+      do
+        assertMsg "already locked" (not locked)
+        create this with locked = True
+
+    -- | Release a lock (settlement cancelled).
+    choice TGHolding_Unlock : ContractId TGHolding
+      controller registry
+      do
+        assertMsg "not locked" locked
+        create this with locked = False

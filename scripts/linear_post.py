@@ -86,6 +86,27 @@ def set_status(identifier, state_name):
         {"id": iid, "s": match[0]["id"]})
     print(f"{identifier} -> {state_name}")
 
+def create_issue(title, description="", state_name=None, parent_identifier=None):
+    """Create an issue on team THE, in the TradeGuard project. Optionally set state and parent."""
+    team = gql("query { teams(filter:{key:{eq:\"THE\"}}){ nodes{ id } } }")["teams"]["nodes"][0]["id"]
+    inp = {"teamId": team, "title": title, "description": description}
+    # attach to the TradeGuard project
+    projs = gql("query($t:ID!){ team(id:$t){ projects{ nodes{ id name } } } }", {"t": team})["team"]["projects"]["nodes"]
+    tg = [p for p in projs if "TradeGuard" in p["name"]]
+    if tg:
+        inp["projectId"] = tg[0]["id"]
+    if state_name:
+        states = gql("query($t:ID!){ team(id:$t){ states{ nodes{ id name } } } }", {"t": team})["team"]["states"]["nodes"]
+        m = [s for s in states if s["name"].lower() == state_name.lower()]
+        if m:
+            inp["stateId"] = m[0]["id"]
+    if parent_identifier:
+        inp["parentId"] = issue_id(parent_identifier)
+    d = gql("mutation($i:IssueCreateInput!){ issueCreate(input:$i){ success issue{ identifier url } } }", {"i": inp})
+    iss = d["issueCreate"]["issue"]
+    print(f"created {iss['identifier']}: {title}")
+    return iss["identifier"]
+
 if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == "comment":
@@ -94,5 +115,11 @@ if __name__ == "__main__":
         upload_image(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else "")
     elif cmd == "status":
         set_status(sys.argv[2], sys.argv[3])
+    elif cmd == "create":
+        # create "<title>" ["desc"] [state] [parent]
+        create_issue(sys.argv[2],
+                     sys.argv[3] if len(sys.argv) > 3 else "",
+                     sys.argv[4] if len(sys.argv) > 4 else None,
+                     sys.argv[5] if len(sys.argv) > 5 else None)
     else:
         raise SystemExit("unknown command")
