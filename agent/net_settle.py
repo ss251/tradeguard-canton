@@ -323,6 +323,8 @@ def settle_real(policy_text: str | None = None, maximal: bool = True) -> dict:
     from agent import limits as limmod
     ledger_limits = limmod.load_limits(parties)
     solver_limits = limmod.to_solver_limits(ledger_limits)
+    ledger_aggs = limmod.load_agg_limits(parties)
+    solver_aggs = limmod.to_solver_agg_limits(ledger_aggs)
 
     weights: dict = {}
     policy_info = None
@@ -352,7 +354,7 @@ def settle_real(policy_text: str | None = None, maximal: bool = True) -> dict:
            for (p, q, a) in facts_raw]
 
     if maximal:
-        plan = solve_maximal(obs, solver_limits, weights)
+        plan = solve_maximal(obs, solver_limits, weights, agg_limits=solver_aggs)
         settle_set = set(plan.settled_obligations)
         if not settle_set:
             # nothing can settle this cycle — report, don't crash
@@ -400,11 +402,13 @@ def settle_real(policy_text: str | None = None, maximal: bool = True) -> dict:
     # carry the SAME on-ledger limit cids into the batch -> the SettleNetting guard
     # re-checks the plan the solver already respected (defense in depth).
     cl_cids = limmod.limit_cids(ledger_limits)
+    agg_cids = limmod.agg_limit_cids(ledger_aggs)
     batch_payload = {
         "operator": operator, "obligations": obl_cids, "obligationFacts": obl_facts,
         "residualLegs": legs, "cashInstrument": _instr(bank),
         "parties": _parties_set(sorted(involved)),
         "creditLimits": (cl_cids if cl_cids else None),
+        "aggregateLimits": (agg_cids if agg_cids else None),
         "regulator": parties.get("netreg"), "status": "Pending"}
     r = op.create_tree("TradeGuard.Netting:NettingBatch", batch_payload)
     if _err(r):
@@ -485,6 +489,7 @@ def attempt_fraud() -> dict:
         "operator": operator, "obligations": obl_cids, "obligationFacts": obl_facts,
         "residualLegs": [leg], "cashInstrument": _instr(bank),
         "parties": _parties_set(involved), "creditLimits": [],
+        "aggregateLimits": None,
         "regulator": parties.get("netreg"), "status": "Pending"}
     rb = op.create_tree("TradeGuard.Netting:NettingBatch", batch_payload)
     if _err(rb):
@@ -571,6 +576,7 @@ def attempt_credit_breach() -> dict:
         "operator": operator, "obligations": obl_cids, "obligationFacts": obl_facts,
         "residualLegs": legs, "cashInstrument": _instr(bank),
         "parties": _parties_set(involved), "creditLimits": [cl_cid],
+        "aggregateLimits": None,
         "regulator": parties.get("netreg"), "status": "Pending"}
     rb = op.create_tree("TradeGuard.Netting:NettingBatch", batch_payload)
     if _err(rb):
@@ -701,7 +707,7 @@ def settle_cross_currency() -> dict:
         "residualLegs": legs, "cashInstrument": _instr_ccy(bank, "USD"),
         "parties": _parties_set(sorted(involved)), "creditLimits": None,
         "fxRates": fx_cids, "liquidityFloors": None, "balanceFacts": None,
-        "valuationCurrency": "USD",
+        "valuationCurrency": "USD", "aggregateLimits": None,
         "regulator": parties.get("netreg"), "status": "Pending"}
     r = op.create_tree("TradeGuard.Netting:NettingBatch", batch_payload)
     if _err(r):

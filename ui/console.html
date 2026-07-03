@@ -205,10 +205,13 @@
       </div>
 
       <div class="card" style="margin-top:18px">
-        <h3>On-ledger Liquidity Floors <span class="tag">min balance, enforced</span></h3>
+        <h3>On-ledger Liquidity Floors &amp; Aggregate Caps <span class="tag">enforced by the ledger</span></h3>
         <div id="floorslist" style="font-family:var(--mono);font-size:.86rem;line-height:1.8;color:var(--ink2)">— none set —</div>
+        <div id="agglist" style="font-family:var(--mono);font-size:.86rem;line-height:1.8;color:var(--ink2)">— no aggregate caps —</div>
+        <div style="font-family:var(--mono);font-size:.78rem;color:var(--ink2);margin-top:6px;opacity:.85">Aggregate caps bound a firm's TOTAL outflow across ALL counterparties — the Basel large-exposure case bilateral limits can't catch. The solver defers the excess; the ledger re-checks at settle.</div>
         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
           <button class="ghost" onclick="seedFloor()">Seed FirmA ≥ 50 USD</button>
+          <button class="ghost" onclick="seedAgg()">Cap FirmA TOTAL ≤ 50 USD</button>
           <button class="ghost" onclick="clearAll()">Clear ALL constraints</button>
         </div>
       </div>
@@ -362,6 +365,10 @@ function renderLimits(st){
   if(flel) flel.innerHTML = fl.length
     ? fl.map(f=>`<div>${f.party} &nbsp;<b>≥ ${f.floor.toFixed(0)} ${f.currency}</b></div>`).join('')
     : '— none set —';
+  const agel=$('#agglist'); const ag=st.aggregate_limits||[];
+  if(agel) agel.innerHTML = ag.length
+    ? ag.map(a=>`<div>${a.party} TOTAL &nbsp;<b>≤ ${a.limit.toFixed(0)} ${a.currency}</b> <span style="opacity:.65">(all counterparties)</span></div>`).join('')
+    : '— no aggregate caps —';
 }
 
 function banner(kind,msg){const b=$('#banner');b.className='banner '+kind;b.textContent=msg;}
@@ -473,6 +480,11 @@ async function seedFloor(){
   try{const r=await fetch('/api/console/floors',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({party:'firma',floor:50,currency:'USD'})});
     const d=await r.json(); render(d.state); toast(d.ok?'On-ledger liquidity floor seeded ✓':'seed failed',!d.ok);
   }catch(e){toast('floor error',true);}
+}
+async function seedAgg(){
+  try{const r=await fetch('/api/console/agg-limit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({party:'firma',limit:50,currency:'USD'})});
+    const d=await r.json(); render(d.state); toast(d.ok?'AGGREGATE exposure cap seeded on-ledger ✓':'seed failed',!d.ok);
+  }catch(e){toast('agg-limit error',true);}
 }
 
 /* ── Canton Token Standard (CIP-56) ── */

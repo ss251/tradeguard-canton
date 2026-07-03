@@ -22,7 +22,7 @@ import os
 from agent.real_client import RealLedgerClient, load_real_parties, HOST, _auth_token
 from agent.netting import Obligation, netting_report, minimal_settlement
 
-TG = "#tradeguard-token:TradeGuard.TokenSettlement"
+TG = "#tradeguard:TradeGuard.TokenSettlement"
 HOLDING_IFACE = "#splice-api-token-holding-v1:Splice.Api.Token.HoldingV1:Holding"
 
 # The canonical single-instrument demo book (USDCx), same magnitudes as the LocalNet
@@ -174,7 +174,7 @@ def settle_token(instrument: str = "USDCx", book=None) -> dict:
         return {"ok": False, "error": "could not resolve NettingSettlement cid"}
 
     # 4. execute atomically (senderHoldings is a list of [Party, ContractId] tuples)
-    ex = op.exercise(f"{TG}:NettingSettlement", scid, "NettingSettlement_Execute",
+    ex = op.exercise(f"{TG}:NettingSettlement", scid, "NettingSettlement_ExecuteThreaded",
                      {"senderHoldings": sender_holdings})
     if ex.get("_http_error"):
         return {"ok": False, "error": f"execute failed: {ex}", "report": report}

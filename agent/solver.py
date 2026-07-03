@@ -52,6 +52,16 @@ class CreditLimit:
 
 
 @dataclass(frozen=True)
+class AggLimit:
+    """Max TOTAL `party` may pay out across ALL counterparties in `currency`.
+    Bilateral caps bound each pair; this bounds the row-sum (Basel large-exposure
+    style). Mirrors the on-ledger TradeGuard.Netting:AggregateLimit guard."""
+    party: str
+    limit: float
+    currency: str = "USD"
+
+
+@dataclass(frozen=True)
 class FXRate:
     """A co-signed conversion rate: 1 unit of `base` = `rate` units of `quote`."""
     base: str
@@ -317,6 +327,7 @@ def solve_maximal(
     obligations: list[Obligation],
     limits: list[CreditLimit] | None = None,
     objective_weights: dict[tuple[str, str], float] | None = None,
+    agg_limits: list[AggLimit] | None = None,
 ) -> SolveResult:
     """MAXIMAL FEASIBLE NETTING — the product behaviour, not the demo behaviour.
 
@@ -339,6 +350,7 @@ def solve_maximal(
     """
     limits = limits or []
     objective_weights = objective_weights or {}
+    agg_limits = agg_limits or []
 
     result = SolveResult(feasible=True)
     result.gross_obligations = round(sum(o.amount for o in obligations), 2)
@@ -354,7 +366,7 @@ def solve_maximal(
 
     for currency, idxs in sorted(per_ccy.items()):
         c_settled, c_deferred, transfers, net, c_reasons = _solve_one_currency_maximal(
-            currency, obligations, idxs, limits, objective_weights)
+            currency, obligations, idxs, limits, objective_weights, agg_limits)
         result.net_positions[currency] = {p: round(v, 2) for p, v in net.items()}
         settled_idx.extend(c_settled)
         deferred_idx.extend(c_deferred)
@@ -401,6 +413,7 @@ def _solve_one_currency_maximal(
     idxs: list[int],
     limits: list[CreditLimit],
     objective_weights: dict[tuple[str, str], float],
+    agg_limits: list[AggLimit] | None = None,
 ) -> tuple[list[int], list[int], list[SolvedTransfer], dict[str, float], list[str]]:
     """Per-currency MILP: choose the max-value subset of `idxs` to settle now.
 
@@ -447,6 +460,16 @@ def _solve_one_currency_maximal(
             capped[(cl.frm, cl.to)] = cl.limit
             prob += (x[(cl.frm, cl.to)] <= cl.limit, f"limit_{cl.frm}_{cl.to}")
 
+    # AGGREGATE exposure limits: cap each party's TOTAL residual outflow across ALL
+    # counterparties (row-sum). Bilateral caps alone can miss this; the on-ledger
+    # AggregateLimit guard enforces the same bound at settle time.
+    agg_capped: dict[str, float] = {}
+    for al in (agg_limits or []):
+        if al.currency == currency and al.party in parties:
+            agg_capped[al.party] = al.limit
+            prob += (pulp.lpSum(x[(al.party, q)] for q in parties if q != al.party)
+                     <= al.limit, f"agg_{al.party}")
+
     prob.solve(pulp.PULP_CBC_CMD(msg=False))
 
     settled_idx, deferred_idx = [], []
@@ -473,6 +496,13 @@ def _solve_one_currency_maximal(
 
     reasons = []
     if deferred_idx:
+        # aggregate caps first: a payer whose full outflow exceeds its aggregate cap
+        for p, cap in agg_capped.items():
+            owed_full = round(sum(o.amount for o in obls if o.payer == p), 2)
+            if cap + EPS < owed_full:
+                reasons.append(
+                    f"{p}'s AGGREGATE exposure cap is {cap:g} {currency} but the full "
+                    f"book would have it pay {owed_full:g} total — excess deferred")
         # explain which receiver's inbound cap forced the deferral
         for q in parties:
             has_uncapped = any((p, q) not in capped for p in parties if p != q)

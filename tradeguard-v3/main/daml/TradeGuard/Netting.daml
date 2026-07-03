@@ -80,6 +80,28 @@ template CreditLimit
     observer to
     ensure limit >= 0.0
 
+-- | An on-ledger AGGREGATE exposure limit: a cap on a firm's TOTAL residual outflow
+--   across ALL counterparties in a currency. Bilateral CreditLimits cap each pair,
+--   but a firm within every bilateral cap can still be over-exposed in AGGREGATE
+--   (10 counterparties x 90 under a 100 bilateral cap = 900 total outflow). This is
+--   the single-counterparty vs. large-exposure distinction real risk frameworks
+--   draw (e.g. Basel large-exposure rules). The firm signs its own aggregate cap,
+--   the operator co-signs; the settle choice REJECTS any plan whose total residual
+--   outflow for the firm exceeds it — enforced by the ledger, not policy.
+template AggregateLimit
+  with
+    operator : Party
+      -- ^ The netting operator administering the rail.
+    party : Party
+      -- ^ The firm whose TOTAL outflow is capped.
+    currency : Text
+      -- ^ The currency the cap applies to.
+    limit : Decimal
+      -- ^ Max TOTAL residual amount `party` may pay out across ALL counterparties.
+  where
+    signatory party, operator
+    ensure limit >= 0.0
+
 -- | The status of a netting cycle as it moves through its lifecycle.
 data CycleStatus
   = CycleOpen      -- ^ accepting obligations; the book accrues
@@ -294,6 +316,10 @@ template NettingBatch
     valuationCurrency : Optional Text
       -- ^ The common currency cross-currency value-conservation is measured in
       --   (default "USD" when absent).
+    aggregateLimits : Optional [ContractId AggregateLimit]
+      -- ^ On-ledger AGGREGATE exposure caps (total outflow per firm across ALL
+      --   counterparties). Optional and LAST field for upgrade compatibility;
+      --   absent/None => unconstrained.
   where
     signatory operator
     observer parties, regObs regulator
@@ -390,6 +416,21 @@ template NettingBatch
             ("credit limit breached: " <> show cl.from <> " -> " <> show cl.to
               <> " in " <> cl.currency)
             (owed <= cl.limit)
+
+        -- adversarial guard 6: on-ledger AGGREGATE exposure limits. For each cap,
+        -- the firm's TOTAL residual outflow across ALL counterparties in that
+        -- currency must not exceed the cap. Bilateral limits alone cannot catch
+        -- this (a firm inside every pair-cap can still be over-exposed in
+        -- aggregate) — the large-exposure guard real risk frameworks require.
+        forA_ (fromOptional [] aggregateLimits) $ \alCid -> do
+          al <- fetch alCid
+          let totalOut = sum [ t.amount | t <- residualTransfers
+                             , t.sender == al.party, ccyOf t == al.currency ]
+          assertMsg
+            ("aggregate exposure limit breached: " <> show al.party
+              <> " total outflow " <> show totalOut <> " " <> al.currency
+              <> " > cap " <> show al.limit)
+            (totalOut <= al.limit)
 
         -- adversarial guard 5: on-ledger LIQUIDITY FLOORS. For each floor, the
         -- party's POST-settle balance in that currency (pre-settle balance + its net

@@ -195,6 +195,7 @@ def build_state(policy_text: str | None = None) -> dict:
     ledger_limits = limmod.load_limits(parties)
     ledger_fx = limmod.load_fx_rates(parties)
     ledger_floors = limmod.load_liquidity_floors(parties)
+    ledger_aggs = limmod.load_agg_limits(parties)
 
     # settlement status (operator's view). After settle the obligations are
     # discharged (book -> 0) and residual cash holdings exist at the firms.
@@ -218,6 +219,9 @@ def build_state(policy_text: str | None = None) -> dict:
         "liquidity_floors": [
             {"party": f.party.split("::")[0], "currency": f.currency,
              "floor": f.floor} for f in ledger_floors],
+        "aggregate_limits": [
+            {"party": a.party.split("::")[0], "currency": a.currency,
+             "limit": a.limit} for a in ledger_aggs],
         "settled_count": len(settled),
         "open_batches": len(batches),
         "residual_holdings": firm_holdings,
@@ -298,6 +302,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, res)
             elif u.path == "/api/console/limits/clear":
                 res = limmod.clear_limits()
+                res["state"] = build_state()
+                self._send(200, res)
+            elif u.path == "/api/console/agg-limit":
+                # seed an on-ledger AGGREGATE exposure cap: {party, limit, currency}
+                res = limmod.seed_agg_limit(
+                    body.get("party", "firma"), float(body.get("limit", 50.0)),
+                    body.get("currency", "USD"))
+                res["state"] = build_state()
+                self._send(200, res)
+            elif u.path == "/api/console/agg-limit/clear":
+                res = limmod.clear_agg_limits()
                 res["state"] = build_state()
                 self._send(200, res)
             elif u.path == "/api/console/settle":

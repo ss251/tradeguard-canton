@@ -113,7 +113,7 @@ testThreePartyNetting = do
   batch <- submit w.operator do
     createCmd NettingBatch with
       operator = w.operator; obligations = obls; obligationFacts = facts
-      residualLegs; cashInstrument = w.usd; creditLimits = Some []; fxRates = None; liquidityFloors = None; balanceFacts = None; valuationCurrency = None
+      residualLegs; cashInstrument = w.usd; creditLimits = Some []; fxRates = None; liquidityFloors = None; balanceFacts = None; valuationCurrency = None; aggregateLimits = None
       parties = Set.fromList [w.firmA, w.firmB, w.firmC]
       regulator = Some w.regulator; status = Pending
 
@@ -171,7 +171,7 @@ testNettingRejectsValueViolation = do
   batch <- submit w.operator do
     createCmd NettingBatch with
       operator = w.operator; obligations = [o1]; obligationFacts = facts
-      residualLegs = badLegs; cashInstrument = w.usd; creditLimits = Some []; fxRates = None; liquidityFloors = None; balanceFacts = None; valuationCurrency = None
+      residualLegs = badLegs; cashInstrument = w.usd; creditLimits = Some []; fxRates = None; liquidityFloors = None; balanceFacts = None; valuationCurrency = None; aggregateLimits = None
       parties = Set.fromList [w.firmA, w.firmB]
       regulator = None; status = Pending
 
@@ -256,7 +256,7 @@ testMultiCurrencyNetting = do
   batch <- submit w.operator do
     createCmd NettingBatch with
       operator = w.operator; obligations = obls; obligationFacts = facts
-      residualLegs; cashInstrument = w.usd; creditLimits = Some []; fxRates = None; liquidityFloors = None; balanceFacts = None; valuationCurrency = None
+      residualLegs; cashInstrument = w.usd; creditLimits = Some []; fxRates = None; liquidityFloors = None; balanceFacts = None; valuationCurrency = None; aggregateLimits = None
       parties = Set.fromList [w.firmA, w.firmB]
       regulator = Some w.regulator; status = Pending
 
@@ -311,7 +311,7 @@ testNettingRejectsCreditLimitBreach = do
   batch <- submit w.operator do
     createCmd NettingBatch with
       operator = w.operator; obligations = [o1]; obligationFacts = facts
-      residualLegs = [leg]; cashInstrument = w.usd; creditLimits = Some [limit]; fxRates = None; liquidityFloors = None; balanceFacts = None; valuationCurrency = None
+      residualLegs = [leg]; cashInstrument = w.usd; creditLimits = Some [limit]; fxRates = None; liquidityFloors = None; balanceFacts = None; valuationCurrency = None; aggregateLimits = None
       parties = Set.fromList [w.firmA, w.firmB]
       regulator = None; status = Pending
 
@@ -329,6 +329,70 @@ testNettingRejectsCreditLimitBreach = do
   assertMsg "obligation must survive the rejected settle" (not (isNone still))
 
   debug "testNettingRejectsCreditLimitBreach PASSED: on-ledger credit limit rejected the over-exposing plan; nothing settled"
+  pure ()
+
+-- | AGGREGATE exposure limit: the case bilateral caps CANNOT catch. FirmA owes B 60
+--   and C 60. Bilateral caps of 80 per pair both PASS (60<=80, 60<=80) — yet A's
+--   TOTAL outflow is 120. FirmA's on-ledger AggregateLimit of 100 REJECTS the plan.
+--   This is the Basel large-exposure distinction, enforced by the ledger itself.
+testNettingRejectsAggregateBreach : Script ()
+testNettingRejectsAggregateBreach = do
+  w <- setupNetWorld
+  cashI <- submit w.bank do
+    createCmd Instrument with
+      depository = w.bank; issuer = w.bank; id = Id "USD"; version = "1"
+      holdingStandard = TransferableFungible; description = "USD"; observers = Set.empty
+  mkCashAccount w.bank w.firmA "A-cash"
+  mkCashAccount w.bank w.firmB "B-cash"
+  mkCashAccount w.bank w.firmC "C-cash"
+  _ <- submit w.bank do createCmd SettlementAuthority with custodian = w.bank; coordinator = w.operator
+  auth <- findAuth w.bank w.operator
+
+  o1 <- mkObligation w.firmA w.firmB w.operator w.usd 60.0 "A->B 60"
+  o2 <- mkObligation w.firmA w.firmC w.operator w.usd 60.0 "A->C 60"
+
+  -- bilateral caps that BOTH pass (60 <= 80 each) — the pair-level view sees no problem
+  clB <- submitMulti [w.firmA, w.operator] [] do
+    createCmd CreditLimit with
+      operator = w.operator; from = w.firmA; to = w.firmB; currency = "USD"; limit = 80.0
+  clC <- submitMulti [w.firmA, w.operator] [] do
+    createCmd CreditLimit with
+      operator = w.operator; from = w.firmA; to = w.firmC; currency = "USD"; limit = 80.0
+  -- FirmA's AGGREGATE cap: total outflow <= 100. Plan total = 120 -> must be rejected.
+  agg <- submitMulti [w.firmA, w.operator] [] do
+    createCmd AggregateLimit with
+      operator = w.operator; party = w.firmA; currency = "USD"; limit = 100.0
+
+  let facts = [ NetTransfer w.firmA w.firmB 60.0 (Some "USD")
+              , NetTransfer w.firmA w.firmC 60.0 (Some "USD") ]
+      legB = Leg with sender = w.firmA; receiver = w.firmB; custodian = w.bank; instrument = w.usd; amount = 60.0; senderAccountId = Id "A-cash"; receiverAccountId = Id "B-cash"
+      legC = Leg with sender = w.firmA; receiver = w.firmC; custodian = w.bank; instrument = w.usd; amount = 60.0; senderAccountId = Id "A-cash"; receiverAccountId = Id "C-cash"
+  batch <- submit w.operator do
+    createCmd NettingBatch with
+      operator = w.operator; obligations = [o1, o2]; obligationFacts = facts
+      residualLegs = [legB, legC]; cashInstrument = w.usd; creditLimits = Some [clB, clC]; fxRates = None; liquidityFloors = None; balanceFacts = None; valuationCurrency = None; aggregateLimits = Some [agg]
+      parties = Set.fromList [w.firmA, w.firmB, w.firmC]
+      regulator = None; status = Pending
+
+  cash1 <- issueCash cashI w.bank w.firmA "A-cash" 60.0
+  cash2 <- issueCash cashI w.bank w.firmA "A-cash" 60.0
+  locked1 <- submitMulti [w.bank, w.firmA] [] do
+    exerciseCmd cash1 LockHolding with locker = w.operator; context = "agg1"
+  locked2 <- submitMulti [w.bank, w.firmA] [] do
+    exerciseCmd cash2 LockHolding with locker = w.operator; context = "agg2"
+  let allocs = [ AllocatedLeg with leg = legB; holdingCid = locked1; authorityCid = auth
+               , AllocatedLeg with leg = legC; holdingCid = locked2; authorityCid = auth ]
+
+  -- MUST FAIL: bilateral caps pass, but the AGGREGATE guard rejects total outflow 120 > 100
+  submitMultiMustFail (w.operator :: [w.firmA, w.firmB, w.firmC]) [] do
+    exerciseCmd batch SettleNetting with allocations = allocs
+
+  -- atomic rollback: both obligations untouched
+  s1 <- queryContractId w.firmA o1
+  s2 <- queryContractId w.firmA o2
+  assertMsg "obligations must survive the rejected settle" (not (isNone s1) && not (isNone s2))
+
+  debug "testNettingRejectsAggregateBreach PASSED: bilateral caps passed but the on-ledger AGGREGATE limit rejected total outflow 120 > 100"
   pure ()
 
 -- | CROSS-CURRENCY netting at a CO-SIGNED FX rate. FirmA owes FirmB 100 USD; FirmB
@@ -379,6 +443,7 @@ testCrossCurrencyNettingAtAgreedRate = do
       residualLegs; cashInstrument = w.usd; creditLimits = Some []
       fxRates = Some [fx]; liquidityFloors = None; balanceFacts = None
       valuationCurrency = Some "USD"
+      aggregateLimits = None
       parties = bookParties
       regulator = Some w.regulator; status = Pending
 
@@ -430,6 +495,7 @@ testCrossCurrencyRejectsValueViolation = do
       residualLegs = [badLeg]; cashInstrument = w.usd; creditLimits = Some []
       fxRates = Some [fx]; liquidityFloors = None; balanceFacts = None
       valuationCurrency = Some "USD"
+      aggregateLimits = None
       parties = bookParties; regulator = None; status = Pending
   bad <- issueCash usdI w.bank w.firmA "A-cash" 30.0
   locked <- submitMulti [w.bank, w.firmA] [] do exerciseCmd bad LockHolding with locker = w.operator; context = "fxbad"
@@ -469,6 +535,7 @@ testNettingRejectsLiquidityFloorBreach = do
       residualLegs = [leg]; cashInstrument = w.usd; creditLimits = Some []
       fxRates = None; liquidityFloors = Some [floor]; balanceFacts = Some bal
       valuationCurrency = None
+      aggregateLimits = None
       parties = Set.fromList [w.firmA, w.firmB]; regulator = None; status = Pending
 
   cash <- issueCash cashI w.bank w.firmA "A-cash" 100.0
@@ -519,6 +586,7 @@ testCrossCurrencyRejectsUnsignedRate = do
       residualLegs = [legUsd]; cashInstrument = w.usd; creditLimits = Some []
       fxRates = Some [fx]; liquidityFloors = None; balanceFacts = None
       valuationCurrency = Some "USD"
+      aggregateLimits = None
       parties = Set.fromList [w.firmA, w.firmB]; regulator = None; status = Pending
   aUsd <- issueCash usdI w.bank w.firmA "A-cash" 40.0
   locked <- submitMulti [w.bank, w.firmA] [] do exerciseCmd aUsd LockHolding with locker = w.operator; context = "fxun"

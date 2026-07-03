@@ -278,6 +278,37 @@ def test_maximal_settled_subset_conserves():
     print(f"test_maximal_settled_subset_conserves PASSED — settled subset conserves per-party")
 
 
+def test_aggregate_limit_defers():
+    """AGGREGATE exposure cap: bilateral caps alone cannot catch a firm over-exposed
+    in TOTAL. A owes B 60 and C 60 (bilateral caps 80 each — both fine); A's aggregate
+    cap of 100 must force a partial settle with total outflow <= 100."""
+    from agent.solver import solve_maximal, CreditLimit, AggLimit
+    book = [Obligation("A", "B", 60.0), Obligation("A", "C", 60.0)]
+    lims = [CreditLimit("A", "B", 80.0), CreditLimit("A", "C", 80.0)]
+    aggs = [AggLimit(party="A", limit=100.0)]
+    r = solve_maximal(book, lims, agg_limits=aggs)
+    total_out = sum(t.amount for t in r.transfers if t.sender == "A")
+    assert total_out <= 100.0 + 0.01, f"A's total outflow {total_out} must respect the 100 cap"
+    assert len(r.deferred_obligations) >= 1, "must defer at least one obligation"
+    assert any("AGGREGATE" in x for x in r.deferral_reasons), \
+        f"deferral reason must name the aggregate cap: {r.deferral_reasons}"
+    # and with no aggregate cap the whole book settles
+    r2 = solve_maximal(book, lims)
+    assert not r2.deferred_obligations, "without the agg cap the whole book must settle"
+    print(f"test_aggregate_limit_defers PASSED — bilateral caps pass, aggregate cap "
+          f"defers (outflow {total_out:g} <= 100); reason: {r.deferral_reasons[0]}")
+
+
+def test_aggregate_limit_non_binding():
+    """An aggregate cap ABOVE the firm's total outflow changes nothing."""
+    from agent.solver import solve_maximal, AggLimit
+    book = [Obligation("A", "B", 60.0), Obligation("A", "C", 60.0)]
+    r = solve_maximal(book, [], agg_limits=[AggLimit(party="A", limit=200.0)])
+    assert not r.deferred_obligations, "cap 200 > outflow 120 must not defer anything"
+    assert r.settled_value == 120.0
+    print("test_aggregate_limit_non_binding PASSED — non-binding aggregate cap is a no-op")
+
+
 if __name__ == "__main__":
     test_unconstrained_matches_canonical()
     test_multi_currency_independent()
@@ -294,4 +325,6 @@ if __name__ == "__main__":
     test_maximal_reroutes_before_deferring()
     test_maximal_degrades_instead_of_refusing()
     test_maximal_settled_subset_conserves()
+    test_aggregate_limit_defers()
+    test_aggregate_limit_non_binding()
     print("\nALL SOLVER TESTS PASSED")

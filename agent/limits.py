@@ -142,6 +142,85 @@ def clear_limits(parties: dict | None = None) -> dict:
     return {"ok": not errors, "cleared": cleared, "errors": errors}
 
 
+# ─────────────────────────  AGGREGATE exposure limits  ─────────────────────────
+AGG_LIMIT_T = "TradeGuard.Netting:AggregateLimit"
+
+
+@dataclass
+class LedgerAggLimit:
+    """An on-ledger AggregateLimit: cap on `party`'s TOTAL outflow in `currency`."""
+    cid: str
+    party: str           # full party id
+    currency: str
+    limit: float
+
+    def short(self) -> str:
+        return f"{_short(self.party)} TOTAL <= {self.limit:g} {self.currency}"
+
+
+def seed_agg_limit(party_key: str, limit: float, currency: str = "USD",
+                   parties: dict | None = None) -> dict:
+    """Create an AggregateLimit on-ledger: `party_key`'s TOTAL residual outflow
+    across ALL counterparties may not exceed `limit` in `currency`."""
+    parties = parties or load_real_parties()
+    operator = parties["operator"]
+    party = parties[party_key]
+    op = RealLedgerClient(operator)
+    r = op.create_tree(AGG_LIMIT_T,
+                       {"operator": operator, "party": party,
+                        "currency": currency, "limit": limit},
+                       act_as=[party, operator])
+    e = _err(r)
+    if e:
+        return {"ok": False, "error": e}
+    cid = _tree_created_cid(r, AGG_LIMIT_T)
+    return {"ok": True, "cid": cid, "party": _short(party),
+            "currency": currency, "limit": limit}
+
+
+def load_agg_limits(parties: dict | None = None) -> list[LedgerAggLimit]:
+    """Read every AggregateLimit the operator can see (the live set)."""
+    parties = parties or load_real_parties()
+    op = RealLedgerClient(parties["operator"])
+    out: list[LedgerAggLimit] = []
+    for c in op.query(AGG_LIMIT_T):
+        pl = c["payload"]
+        out.append(LedgerAggLimit(
+            cid=c["contractId"], party=pl["party"],
+            currency=pl.get("currency", "USD"), limit=float(pl["limit"])))
+    return out
+
+
+def to_solver_agg_limits(ledger_aggs: list[LedgerAggLimit]):
+    """Convert on-ledger aggregate limits to solver AggLimits (short party names)."""
+    from agent.solver import AggLimit
+    return [AggLimit(party=_short(a.party), limit=a.limit, currency=a.currency)
+            for a in ledger_aggs]
+
+
+def agg_limit_cids(ledger_aggs: list[LedgerAggLimit]) -> list[str]:
+    """ContractIds for NettingBatch.aggregateLimits so SettleNetting enforces the
+    SAME aggregate caps the solver planned under."""
+    return [a.cid for a in ledger_aggs]
+
+
+def clear_agg_limits(parties: dict | None = None) -> dict:
+    """Archive every AggregateLimit on the ledger."""
+    parties = parties or load_real_parties()
+    op = RealLedgerClient(parties["operator"])
+    cleared = 0
+    errors = []
+    for c in op.query(AGG_LIMIT_T):
+        pty = c["payload"]["party"]
+        r = op.exercise(AGG_LIMIT_T, c["contractId"], "Archive", {},
+                        act_as=[pty, parties["operator"]])
+        if _err(r):
+            errors.append(_err(r))
+        else:
+            cleared += 1
+    return {"ok": not errors, "cleared": cleared, "errors": errors}
+
+
 # --- FX rates (co-signed, on-ledger) ---------------------------------------------
 
 @dataclass
@@ -280,9 +359,11 @@ def clear_liquidity_floors(parties: dict | None = None) -> dict:
 
 
 def clear_all(parties: dict | None = None) -> dict:
-    """Clear every on-ledger constraint (credit limits, FX rates, liquidity floors)."""
+    """Clear every on-ledger constraint (credit limits, aggregate limits, FX rates,
+    liquidity floors)."""
     parties = parties or load_real_parties()
     return {"credit_limits": clear_limits(parties),
+            "aggregate_limits": clear_agg_limits(parties),
             "fx_rates": clear_fx_rates(parties),
             "liquidity_floors": clear_liquidity_floors(parties)}
 

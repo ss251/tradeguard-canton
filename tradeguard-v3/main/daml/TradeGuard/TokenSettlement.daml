@@ -190,13 +190,33 @@ template NettingSettlement
     -- DO enforce that every leg has a positive amount and references a known party.
     ensure all (\l -> l.amount > 0.0 && l.sender `elem` parties && l.receiver `elem` parties) legs
 
+    -- | ORIGINAL M1 execute (kept for Canton smart-upgrade compatibility with the
+    --   deployed 1.5.0 lineage): one funding holding PER LEG. Superseded by
+    --   ExecuteThreaded (per-sender threading) and ExecuteMulti (cross-token) below.
+    choice NettingSettlement_Execute : [ContractId TGHolding]
+      with
+        holdingCids : [ContractId TGHolding]
+      controller registry
+      do
+        assertMsg "self-transfer leg" (all (\l -> l.sender /= l.receiver) legs)
+        assertMsg "one funding holding per leg" (length holdingCids == length legs)
+        forA (zip legs holdingCids) $ \(leg, hcid) -> do
+          h <- fetch hcid
+          assertMsg "funding holding wrong instrument" (h.instrumentId == leg.instrumentId)
+          assertMsg "funding holding wrong owner" (h.owner == leg.sender)
+          assertMsg "insufficient holding to fund leg" (h.amount >= leg.amount)
+          (moved, _remainder) <- exercise hcid TGHolding_SplitTransfer with
+            part = leg.amount
+            newOwner = leg.receiver
+          pure moved
+
     -- | Execute the whole residual set atomically as CIP-56 token transfers. Each SENDER
     --   funds ALL of its outgoing legs from a single TGHolding, split sequentially — the
     --   remainder of one split funds the next leg, so a party paying multiple receivers
     --   still uses exactly one input holding. Consumes the settlement (single-shot).
     --   `senderHoldings` maps 1:1 to `settlementSenders this`: the funding TGHolding per
     --   distinct sender, in the same order.
-    choice NettingSettlement_Execute : [ContractId TGHolding]
+    choice NettingSettlement_ExecuteThreaded : [ContractId TGHolding]
       with
         senderHoldings : [(Party, ContractId TGHolding)]
       controller registry
