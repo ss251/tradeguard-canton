@@ -88,7 +88,9 @@ def set_status(identifier, state_name):
 
 def create_issue(title, description="", state_name=None, parent_identifier=None):
     """Create an issue on team THE, in the TradeGuard project. Optionally set state and parent."""
-    team = gql("query { teams(filter:{key:{eq:\"THE\"}}){ nodes{ id } } }")["teams"]["nodes"][0]["id"]
+    # NOTE: Linear's API rejects teams(filter:{key:{eq:...}}) — list and match instead.
+    nodes = gql("query { teams { nodes { id key } } }")["teams"]["nodes"]
+    team = next(t["id"] for t in nodes if t["key"] == "THE")
     inp = {"teamId": team, "title": title, "description": description}
     # attach to the TradeGuard project
     projs = gql("query($t:ID!){ team(id:$t){ projects{ nodes{ id name } } } }", {"t": team})["team"]["projects"]["nodes"]
