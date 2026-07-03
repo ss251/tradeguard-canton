@@ -56,11 +56,11 @@ seedNetBookOnly = do
   let usd = InstrumentKey with
         depository = bank; issuer = bank; id = Id "USD"; version = "1"
         holdingStandard = TransferableFungible
-  _ <- submitMulti [firmA, firmB] [] do createCmd Obligation with payer = firmA; payee = firmB; operator; instrument = usd; amount = 100.0; reference = "A->B inv1"
-  _ <- submitMulti [firmB, firmC] [] do createCmd Obligation with payer = firmB; payee = firmC; operator; instrument = usd; amount = 100.0; reference = "B->C inv2"
-  _ <- submitMulti [firmC, firmA] [] do createCmd Obligation with payer = firmC; payee = firmA; operator; instrument = usd; amount = 80.0; reference = "C->A inv3"
-  _ <- submitMulti [firmA, firmC] [] do createCmd Obligation with payer = firmA; payee = firmC; operator; instrument = usd; amount = 50.0; reference = "A->C inv4"
-  _ <- submitMulti [firmC, firmB] [] do createCmd Obligation with payer = firmC; payee = firmB; operator; instrument = usd; amount = 30.0; reference = "C->B inv5"
+  _ <- submitMulti [firmA, firmB] [] do createCmd Obligation with payer = firmA; payee = firmB; operator; instrument = usd; amount = 100.0; reference = "A->B inv1"; maturity = None
+  _ <- submitMulti [firmB, firmC] [] do createCmd Obligation with payer = firmB; payee = firmC; operator; instrument = usd; amount = 100.0; reference = "B->C inv2"; maturity = None
+  _ <- submitMulti [firmC, firmA] [] do createCmd Obligation with payer = firmC; payee = firmA; operator; instrument = usd; amount = 80.0; reference = "C->A inv3"; maturity = None
+  _ <- submitMulti [firmA, firmC] [] do createCmd Obligation with payer = firmA; payee = firmC; operator; instrument = usd; amount = 50.0; reference = "A->C inv4"; maturity = None
+  _ <- submitMulti [firmC, firmB] [] do createCmd Obligation with payer = firmC; payee = firmB; operator; instrument = usd; amount = 30.0; reference = "C->B inv5"; maturity = None
   pure NetLiveResult with
     firmA; firmB; firmC; operator; bank
     obligationsDischarged = 0; residualsSettled = 0; grossValue = 360.0; netValue = 70.0
@@ -115,11 +115,11 @@ runNetLive = do
     None -> submit bank do createCmd SettlementAuthority with custodian = bank; coordinator = operator
 
   -- the confidential obligation book (each disclosed only to its 2 firms + operator)
-  o1 <- submitMulti [firmA, firmB] [] do createCmd Obligation with payer = firmA; payee = firmB; operator; instrument = usd; amount = 100.0; reference = "A->B inv1"
-  o2 <- submitMulti [firmB, firmC] [] do createCmd Obligation with payer = firmB; payee = firmC; operator; instrument = usd; amount = 100.0; reference = "B->C inv2"
-  o3 <- submitMulti [firmC, firmA] [] do createCmd Obligation with payer = firmC; payee = firmA; operator; instrument = usd; amount = 80.0; reference = "C->A inv3"
-  o4 <- submitMulti [firmA, firmC] [] do createCmd Obligation with payer = firmA; payee = firmC; operator; instrument = usd; amount = 50.0; reference = "A->C inv4"
-  o5 <- submitMulti [firmC, firmB] [] do createCmd Obligation with payer = firmC; payee = firmB; operator; instrument = usd; amount = 30.0; reference = "C->B inv5"
+  o1 <- submitMulti [firmA, firmB] [] do createCmd Obligation with payer = firmA; payee = firmB; operator; instrument = usd; amount = 100.0; reference = "A->B inv1"; maturity = None
+  o2 <- submitMulti [firmB, firmC] [] do createCmd Obligation with payer = firmB; payee = firmC; operator; instrument = usd; amount = 100.0; reference = "B->C inv2"; maturity = None
+  o3 <- submitMulti [firmC, firmA] [] do createCmd Obligation with payer = firmC; payee = firmA; operator; instrument = usd; amount = 80.0; reference = "C->A inv3"; maturity = None
+  o4 <- submitMulti [firmA, firmC] [] do createCmd Obligation with payer = firmA; payee = firmC; operator; instrument = usd; amount = 50.0; reference = "A->C inv4"; maturity = None
+  o5 <- submitMulti [firmC, firmB] [] do createCmd Obligation with payer = firmC; payee = firmB; operator; instrument = usd; amount = 30.0; reference = "C->B inv5"; maturity = None
 
   let obls = [o1, o2, o3, o4, o5]
       facts =

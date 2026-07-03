@@ -35,6 +35,21 @@ The headline above is the core. Phase 2 makes it a product a risk officer can ac
 
 ---
 
+## Phase 3 — live on the real Canton Network + the official Token Standard
+
+Everything above also runs **on the Canton Foundation's shared DevNet** (5N Seaport validator, real OIDC M2M auth, real party allocation, the real Global Synchronizer) — and the settlement layer speaks the **official Canton Network Token Standard (CIP-56)**:
+
+- **CIP-56 token settlement** — TradeGuard's `TGHolding` implements the *real* `Splice.Api.Token.HoldingV1:Holding` interface (built against the official Splice DARs; package-ids match what's deployed on DevNet). Any compliant wallet can read TradeGuard holdings. The netting brain's residuals settle as standard token transfers.
+- **Cross-token atomic DvP (the CIP-112 flagship pattern)** — a book with legs in **two different tokens** (USDCx + WrappedAmulet) nets per-instrument and settles **every leg across both tokens in ONE atomic transaction**. One unfundable leg rolls back the whole cross-token batch. *(Live on DevNet: USDCx 280→80 + WrappedAmulet 90→25, 4 legs / 2 tokens, one tx.)*
+- **Aggregate exposure limits (Basel large-exposure)** — the case bilateral caps *mathematically cannot catch*: a firm inside every pair-cap can still be over-exposed in total. An on-ledger `AggregateLimit` (firm + operator co-signed) caps a firm's TOTAL residual outflow across ALL counterparties; the solver defers the excess, and the ledger re-checks the same cap at settle. *(Daml test: bilateral caps 80/80 pass, aggregate cap 100 rejects total 120 — atomic rollback.)*
+- **Settlement-failure re-net** — when a participant can't fund, the ledger rejects the *whole* batch (atomicity: nothing partial ever hits the book); the agent then excludes the failer's obligations, **re-nets the survivors' book, and settles it** — the failer's obligations stay live for the next cycle. On-ledger funding guard: each allocated holding must exactly fund its leg, right owner, right amount. *(Live on both networks.)*
+- **Obligation maturity** — obligations carry an optional maturity; an immature obligation **cannot be discharged** (on-ledger guard in `Discharge`) and the agent's book filter nets only what's due. Tomorrow's cashflow cannot be netted today. *(Live: 3 due obligations settle, the forward obligation stays.)*
+- **Netting cycles** — the rail runs in on-ledger sessions (`NettingCycle`: Open → Close → Settle → RollForward), the operating rhythm of a real multilateral system (CLS sessions, ACH windows).
+
+Run it: `source ~/.tradeguard/devnet.env && scripts/devnet_demo.sh` — 8 steps live on DevNet.
+
+---
+
 ## What's in the box
 
 | Path | What |
@@ -121,12 +136,13 @@ TG_REAL=1 python3 -m agent.cli status    # agent reads the real ledger
 ## Tests
 
 ```bash
-# Daml ledger logic (20 scripts: netting, privacy, atomicity, credit limits,
-# cross-currency FX at a co-signed rate, unsigned-rate reject, liquidity floors):
+# Daml ledger logic (33 scripts: netting, privacy, atomicity, credit limits, AGGREGATE
+# exposure caps, obligation maturity, cross-currency FX at a co-signed rate,
+# unsigned-rate reject, liquidity floors, CIP-56 token settlement + cross-token DvP):
 cd tradeguard-v3/test && dpm test
 
 # Python (agent brain), from the repo root, using the project venv:
-.venv/bin/python -m agent.test_solver            # 11 solver tests (netting, limits, FX, floors)
+.venv/bin/python -m agent.test_solver            # 17 solver tests (netting, limits, agg caps, FX, floors)
 .venv/bin/python -m agent.test_policy            # 10 policy tests (NL → validated constraints)
 .venv/bin/python -m agent.test_netting           # 5 netting tests
 
@@ -170,11 +186,16 @@ TG_INTEG=1 TG_REAL=1 .venv/bin/python -m agent.test_limits_integration
 
 ## Status
 
-Built and working **end-to-end on a real 3-validator Canton network** (Canton Builder
-LocalNet), not just a sandbox. The full Phase 2 product chain — NL risk policy →
-constrained LP solver → on-ledger credit limits / co-signed FX rates / liquidity floors
-→ human-approved atomic settle (or ledger refusal with the binding reason) — is verified
-live; run `scripts/e2e_phase2.sh` to see all six steps in one go. See `STATUS.md` for the
-full state and `ARCHITECTURE.md` for the deep dive.
+Built and working **end-to-end on TWO real Canton networks**: the local 3-validator
+LocalNet (reset-proof demo spine) and the **Canton Foundation's shared DevNet** (5N
+Seaport validator — real OIDC auth, real party allocation, the real Global Synchronizer,
+with party-level privacy verified against other live tenants). The full product chain —
+NL risk policy → constrained MILP solver → on-ledger credit limits / aggregate exposure
+caps / co-signed FX rates / liquidity floors / obligation maturity → human-approved
+atomic settle (or ledger refusal with the binding reason) → settlement-failure re-net —
+is verified live on both. The settlement layer speaks the official **Canton Network
+Token Standard (CIP-56)**, including cross-token atomic DvP. Run
+`scripts/e2e_phase2.sh` (LocalNet) or `scripts/devnet_demo.sh` (DevNet, 8 steps).
+See `STATUS.md` for the full state and `ARCHITECTURE.md` for the deep dive.
 
 _Apache-2.0. Built for the Build on Canton hackathon, June 2026._

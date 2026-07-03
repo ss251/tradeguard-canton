@@ -73,5 +73,48 @@ print('   REJECTED BY THE LEDGER:', r['constraint'])
 print('   on-chain guard:', (r.get('ledger_error') or '')[:100], '...')
 "
 
+step "6. AGGREGATE exposure cap (Basel large-exposure: bilateral caps can't catch it)"
+$PY -c "
+from agent.net_settle import seed_book, settle_real
+from agent import limits as limmod
+limmod.clear_all()
+seed_book(dense=False)
+r = limmod.seed_agg_limit('firma', 50.0); assert r.get('ok'), r
+s = settle_real()
+assert s.get('ok') and s.get('deferral_reasons'), s
+print('   cap: FirmA TOTAL <= 50 USD across ALL counterparties (on-ledger, co-signed)')
+print('   solver:', s['deferral_reasons'][0][:96])
+limmod.clear_agg_limits()
+s2 = settle_real()
+print('   cap cleared -> full settle:', s2.get('ok'))
+"
+
+step "7. SETTLEMENT-FAILURE re-net (a firm can't fund -> atomic rollback -> survivors settle)"
+$PY -c "
+from agent.net_settle import seed_book, settle_with_failover
+seed_book(dense=False)
+r = settle_with_failover(fail_party='FirmA')
+assert r.get('recovered'), r
+rn = r['renet']
+print('   FirmA underfunded -> ledger rejected the WHOLE batch (atomicity)')
+print(f\"   re-net: excluded {rn['failure_excluded']} FirmA obligations, settled \"
+      f\"{rn['discharged']} survivors ({rn['gross']} gross -> {rn['net']} net)\")
+print('   the failer\\'s obligations stay live for the next cycle')
+"
+
+step "8. CIP-56 TOKEN STANDARD: cross-token atomic DvP (real Splice HoldingV1 interface)"
+$PY -c "
+from agent import token_settle as ts
+ts.clear_tg_holdings(); ts.mint_book_multi()
+r = ts.settle_cross_token(); assert r.get('ok'), r
+rep = r['report_by_instrument']
+per = ' · '.join(f\"{i}: {x['gross_value']}->{x['net_value']} ({x['netting_efficiency_pct']}%)\" for i,x in rep.items())
+print(f\"   {r['leg_count']} residual legs across {len(r['instruments'])} TOKENS in ONE atomic tx\")
+print('  ', per)
+v = ts.verify_via_standard_interface('USDCx')
+print(f\"   verified via the OFFICIAL token-standard interface: {v['holdings_via_standard_interface']} holdings readable\")
+"
+
 hr; printf '\033[1;32m✓ TradeGuard verified LIVE on the Canton Foundation DevNet\033[0m\n'; hr
-echo "  real shared network · real OIDC auth · real atomic settlement · real on-ledger guards"
+echo "  real shared network · real OIDC auth · atomic settlement · on-ledger guards"
+echo "  credit limits · aggregate caps · failure re-net · maturity · CIP-56 tokens · FX"

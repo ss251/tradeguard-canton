@@ -14,6 +14,7 @@ module TradeGuard.Test.Netting where
 import DA.Assert ((===))
 import DA.Optional (isNone)
 import DA.Foldable (forA_)
+import DA.Time (days, addRelTime)
 import qualified DA.Set as Set
 import Daml.Script
 
@@ -54,7 +55,7 @@ setupNetWorld = do
 mkObligation : Party -> Party -> Party -> InstrumentKey -> Decimal -> Text -> Script (ContractId Obligation)
 mkObligation payer payee operator instrument amount reference =
   submitMulti [payer, payee] [] do
-    createCmd Obligation with payer; payee; operator; instrument; amount; reference
+    createCmd Obligation with payer; payee; operator; instrument; amount; reference; maturity = None
 
 mkCashAccount : Party -> Party -> Text -> Script ()
 mkCashAccount bank owner accId = do
@@ -393,6 +394,37 @@ testNettingRejectsAggregateBreach = do
   assertMsg "obligations must survive the rejected settle" (not (isNone s1) && not (isNone s2))
 
   debug "testNettingRejectsAggregateBreach PASSED: bilateral caps passed but the on-ledger AGGREGATE limit rejected total outflow 120 > 100"
+  pure ()
+
+-- | OBLIGATION MATURITY: an obligation due in the future CANNOT be discharged — the
+--   on-ledger guard refuses, so a netting batch that sweeps in tomorrow's cashflow
+--   fails atomically. A mature (or maturity-less) obligation discharges fine.
+testMaturityGuard : Script ()
+testMaturityGuard = do
+  w <- setupNetWorld
+  now <- getTime
+  let tomorrow = addRelTime now (days 1)
+      yesterday = addRelTime now (days (-1))
+  -- immature: due tomorrow
+  oFuture <- submitMulti [w.firmA, w.firmB] [] do
+    createCmd Obligation with
+      payer = w.firmA; payee = w.firmB; operator = w.operator
+      instrument = w.usd; amount = 50.0; reference = "due-tomorrow"
+      maturity = Some tomorrow
+  -- mature: was due yesterday
+  oDue <- submitMulti [w.firmA, w.firmB] [] do
+    createCmd Obligation with
+      payer = w.firmA; payee = w.firmB; operator = w.operator
+      instrument = w.usd; amount = 25.0; reference = "due-yesterday"
+      maturity = Some yesterday
+  -- the ledger REFUSES to discharge the immature obligation
+  submitMustFail w.operator $ exerciseCmd oFuture Discharge
+  -- and happily discharges the mature one
+  submit w.operator $ exerciseCmd oDue Discharge
+  -- the immature obligation is still live
+  still <- queryContractId w.firmA oFuture
+  assertMsg "immature obligation must remain live" (not (isNone still))
+  debug "testMaturityGuard PASSED: ledger refused to discharge an immature obligation; mature one discharged"
   pure ()
 
 -- | CROSS-CURRENCY netting at a CO-SIGNED FX rate. FirmA owes FirmB 100 USD; FirmB

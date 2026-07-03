@@ -43,6 +43,11 @@ template Obligation
     amount : Decimal
     reference : Text
       -- ^ Human-readable reference (invoice id, trade ref, etc.).
+    maturity : Optional Time
+      -- ^ When the obligation becomes DUE. None => due immediately. An immature
+      --   obligation CANNOT be discharged (enforced on-ledger in Discharge), so a
+      --   netting batch that tries to sweep it in fails atomically. LAST field,
+      --   Optional, for Canton smart-upgrade compatibility.
   where
     signatory payer, payee
     observer operator
@@ -51,9 +56,18 @@ template Obligation
     -- | Discharge the obligation. Controlled by the operator alone: both
     --   counterparties consented to this when they signed, delegating netting
     --   authority to the operator. Used inside NettingBatch settlement.
+    --   ON-LEDGER MATURITY GUARD: an obligation that is not yet due refuses to
+    --   discharge — the operator cannot net tomorrow's cashflow today.
     choice Discharge : ()
       controller operator
-      do return ()
+      do
+        now <- getTime
+        case maturity of
+          Some t -> assertMsg
+            ("obligation not yet mature: due " <> show t <> ", now " <> show now)
+            (now >= t)
+          None -> pure ()
+        return ()
 
 -- | An on-ledger bilateral credit limit: the maximum `from` may owe `to` in
 --   `currency` after netting. This is a fintech's real risk constraint, written to
@@ -456,8 +470,19 @@ template NettingBatch
         forA_ obligations (`exercise` Discharge)
 
         -- settle residuals atomically via the proven lock-then-swap path.
-        -- adversarial guard 4 (funding) is enforced here: a locked holding that
-        -- does not cover its leg makes SettleTransfer fail -> whole tx rolls back.
+        -- adversarial guard 4 (FUNDING): each allocated holding must EXACTLY fund its
+        -- leg — right amount, right owner. SettleTransfer moves the WHOLE holding, so
+        -- an under- (or over-) funded allocation would silently mis-pay the receiver.
+        -- Checked here, on-ledger: one bad allocation rolls back the ENTIRE settle.
+        forA_ allocations $ \al -> do
+          h <- fetch al.holdingCid
+          assertMsg
+            ("funding failure: leg " <> show al.leg.sender <> " -> "
+              <> show al.leg.receiver <> " needs " <> show al.leg.amount
+              <> " but the allocated holding has " <> show h.amount)
+            (h.amount == al.leg.amount)
+          assertMsg "funding holding must belong to the leg's sender"
+            (h.account.owner == al.leg.sender)
         forA_ allocations $ \al ->
           exercise al.authorityCid ExecuteSettleTransfer with
             holdingCid = al.holdingCid

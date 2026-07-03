@@ -198,9 +198,12 @@ def json_dumps(o):
     return _j.dumps(o)
 
 
-def _residual_legs_and_allocs(parties, bank, operator, instr_cid, residuals, auth_cid):
+def _residual_legs_and_allocs(parties, bank, operator, instr_cid, residuals, auth_cid,
+                              fail_party: str | None = None):
     """Build residualLegs + allocations (issuing & locking funding holdings) for a
-    list of (sender_party, receiver_party, amount) residual transfers."""
+    list of (sender_party, receiver_party, amount) residual transfers.
+    fail_party (short name, test hook): that sender's holding is issued UNDERFUNDED
+    (half the leg), so the on-ledger funding guard rejects the whole settle."""
     legs, allocs = [], []
     short2key = {}
     for k in _present_firms(parties):
@@ -210,7 +213,10 @@ def _residual_legs_and_allocs(parties, bank, operator, instr_cid, residuals, aut
         r_acc = ACC[short2key[r_party]]
         leg = _leg(s_party, r_party, bank, amt, s_acc, r_acc)
         legs.append(leg)
-        locked = _issue_and_lock(parties, bank, operator, instr_cid, s_party, s_acc, amt, "console-net")
+        fund = amt
+        if fail_party and _short(s_party).lower() == fail_party.lower():
+            fund = round(amt / 2.0, 2)  # simulate a funding failure
+        locked = _issue_and_lock(parties, bank, operator, instr_cid, s_party, s_acc, fund, "console-net")
         allocs.append({"leg": leg, "holdingCid": locked, "authorityCid": auth_cid})
     return legs, allocs
 
@@ -301,7 +307,9 @@ def seed_partial_book() -> dict:
             "limits": "A->C<=30, B->C<=20 (book owes C 55, C can take 50 -> defer)"}
 
 
-def settle_real(policy_text: str | None = None, maximal: bool = True) -> dict:
+def settle_real(policy_text: str | None = None, maximal: bool = True,
+                exclude_parties: list[str] | None = None,
+                fail_party: str | None = None) -> dict:
     """Settle the existing seeded book atomically via v2 using the CONSTRAINED SOLVER.
 
     By default uses MAXIMAL FEASIBLE NETTING (the product behaviour): it settles the
@@ -311,6 +319,12 @@ def settle_real(policy_text: str | None = None, maximal: bool = True) -> dict:
 
     The plan is computed by agent.solver under the SAME on-ledger CreditLimits the
     ledger enforces (single source of truth), optionally steered by an NL policy.
+
+    exclude_parties: short names (e.g. ["FirmB"]) whose obligations are EXCLUDED from
+    this netting cycle (settlement-failure exclusion: the failer's obligations stay
+    live; the survivors' book settles). fail_party: TEST HOOK — simulate a funding
+    failure for that party (its residual legs get an underfunded holding, so the
+    on-ledger settle rejects atomically; used to prove the re-net loop end-to-end).
     """
     parties = load_real_parties()
     bank = parties["netbank"]
@@ -343,9 +357,39 @@ def settle_real(policy_text: str | None = None, maximal: bool = True) -> dict:
 
     # query the obligations ONCE so the solver's indices align with the on-ledger cids
     op = RealLedgerClient(operator)
-    obl_rows = op.query("TradeGuard.Netting:Obligation")
-    if not obl_rows:
+    all_rows = op.query("TradeGuard.Netting:Obligation")
+    if not all_rows:
         return {"ok": False, "error": "no seeded book to settle"}
+    # MATURITY FILTER: only DUE obligations enter the netting book. Immature ones
+    # (maturity in the future) stay live for a later cycle — and the on-ledger
+    # Discharge guard would reject them anyway (defense in depth).
+    from datetime import datetime, timezone
+    now_iso = datetime.now(timezone.utc)
+    def _is_due(c):
+        m = c["payload"].get("maturity")
+        if not m:
+            return True
+        try:
+            due = datetime.fromisoformat(str(m).replace("Z", "+00:00"))
+            return due <= now_iso
+        except ValueError:
+            return True
+    obl_rows = [c for c in all_rows if _is_due(c)]
+    immature_count = len(all_rows) - len(obl_rows)
+    # SETTLEMENT-FAILURE EXCLUSION: drop every obligation touching an excluded party.
+    # Their obligations stay live on-ledger for the next cycle / bilateral follow-up.
+    excluded_count = 0
+    if exclude_parties:
+        exc = {e.lower() for e in exclude_parties}
+        def _touches_excluded(c):
+            return (_short(c["payload"]["payer"]).lower() in exc
+                    or _short(c["payload"]["payee"]).lower() in exc)
+        before = len(obl_rows)
+        obl_rows = [c for c in obl_rows if not _touches_excluded(c)]
+        excluded_count = before - len(obl_rows)
+    if not obl_rows:
+        return {"ok": False, "error": "no DUE obligations to settle",
+                "immature": immature_count, "excluded": excluded_count}
     # facts_raw aligned 1:1 with obl_rows by index
     facts_raw = [(c["payload"]["payer"], c["payload"]["payee"], float(c["payload"]["amount"]))
                  for c in obl_rows]
@@ -397,7 +441,8 @@ def settle_real(policy_text: str | None = None, maximal: bool = True) -> dict:
     for party in involved:
         _ensure_account(parties, bank, party, ACC[short2key[party]])
 
-    legs, allocs = _residual_legs_and_allocs(parties, bank, operator, instr_cid, residuals, auth_cid)
+    legs, allocs = _residual_legs_and_allocs(parties, bank, operator, instr_cid, residuals, auth_cid,
+                                             fail_party=fail_party)
 
     # carry the SAME on-ledger limit cids into the batch -> the SettleNetting guard
     # re-checks the plan the solver already respected (defense in depth).
@@ -421,7 +466,9 @@ def settle_real(policy_text: str | None = None, maximal: bool = True) -> dict:
                      {"allocations": allocs}, act_as=actors)
     e = _err(rs)
     if e:
-        return {"ok": False, "error": f"settle failed: {e}"}
+        return {"ok": False, "error": f"settle failed: {e}", "failed_settle": True,
+                "residual_plan": [{"sender": _short(s), "receiver": _short(r),
+                                   "amount": a} for (s, r, a) in residuals]}
     gross = round(sum(a for (_, _, a) in facts_raw), 2)
     net = round(sum(t.amount for t in plan.transfers), 2)
     settled_gross = round(sum(facts_raw[i][2] for i in settle_set), 2)
@@ -430,6 +477,9 @@ def settle_real(policy_text: str | None = None, maximal: bool = True) -> dict:
             "discharged": len(obl_cids), "residuals": len(residuals),
             "efficiency_pct": plan.netting_efficiency_pct,
             "credit_limits_enforced": len(cl_cids),
+            "aggregate_limits_enforced": len(agg_cids),
+            "immature_excluded": immature_count,
+            "failure_excluded": excluded_count,
             "maximal": maximal,
             "settled_obligations": len(settle_set),
             "deferred_obligations": len(deferred),
@@ -438,6 +488,49 @@ def settle_real(policy_text: str | None = None, maximal: bool = True) -> dict:
             "settlement_rate_pct": getattr(plan, "settlement_rate_pct", 100.0),
             "deferral_reasons": getattr(plan, "deferral_reasons", []),
             "policy": policy_info}
+
+
+def settle_with_failover(fail_party: str | None = None,
+                         policy_text: str | None = None) -> dict:
+    """SETTLEMENT-FAILURE RE-NET — what a real rail does when a participant can't fund.
+
+    1. Attempt the full-book atomic settle. If a party's funding fails, the ledger
+       rejects the WHOLE batch (atomicity — nothing partial ever hits the book).
+    2. The agent identifies the failing sender from the rejected plan, EXCLUDES every
+       obligation touching that party, RE-NETS the survivors' book, and settles it.
+    3. The failer's obligations remain live on-ledger for the next cycle / recovery.
+
+    fail_party (short name, e.g. "FirmA"): test hook that underfunds that party's legs
+    on the FIRST attempt so the failure path actually executes against the live ledger.
+    """
+    attempt1 = settle_real(policy_text, fail_party=fail_party)
+    if attempt1.get("ok"):
+        return {"ok": True, "recovered": False, "first_attempt": attempt1,
+                "note": "full book settled — no failover needed"}
+    if not attempt1.get("failed_settle"):
+        return {"ok": False, "error": attempt1.get("error"), "first_attempt": attempt1}
+
+    # identify the failing sender: with the test hook it's fail_party; in production
+    # you'd parse the ledger error / check funding. Exclude them and re-net.
+    failer = fail_party
+    if not failer:
+        plan = attempt1.get("residual_plan") or []
+        failer = plan[0]["sender"] if plan else None
+    if not failer:
+        return {"ok": False, "error": "settle failed and no failer identifiable",
+                "first_attempt": attempt1}
+
+    attempt2 = settle_real(policy_text, exclude_parties=[failer])
+    return {
+        "ok": bool(attempt2.get("ok")),
+        "recovered": bool(attempt2.get("ok")),
+        "failed_party": failer,
+        "first_attempt": {"error": str(attempt1.get("error"))[:200],
+                          "atomic_rollback": True},
+        "renet": attempt2,
+        "note": (f"{failer} failed to fund; ledger rolled back atomically; survivors' "
+                 f"book re-netted and settled — {failer}'s obligations stay live"),
+    }
 
 
 def attempt_fraud() -> dict:
