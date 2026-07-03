@@ -93,12 +93,12 @@ def create_issue(title, description="", state_name=None, parent_identifier=None)
     team = next(t["id"] for t in nodes if t["key"] == "THE")
     inp = {"teamId": team, "title": title, "description": description}
     # attach to the TradeGuard project
-    projs = gql("query($t:ID!){ team(id:$t){ projects{ nodes{ id name } } } }", {"t": team})["team"]["projects"]["nodes"]
+    projs = gql("query($t:String!){ team(id:$t){ projects{ nodes{ id name } } } }", {"t": team})["team"]["projects"]["nodes"]
     tg = [p for p in projs if "TradeGuard" in p["name"]]
     if tg:
         inp["projectId"] = tg[0]["id"]
     if state_name:
-        states = gql("query($t:ID!){ team(id:$t){ states{ nodes{ id name } } } }", {"t": team})["team"]["states"]["nodes"]
+        states = gql("query($t:String!){ team(id:$t){ states{ nodes{ id name } } } }", {"t": team})["team"]["states"]["nodes"]
         m = [s for s in states if s["name"].lower() == state_name.lower()]
         if m:
             inp["stateId"] = m[0]["id"]
