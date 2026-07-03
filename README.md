@@ -2,6 +2,9 @@
 
 **Private multilateral netting + atomic settlement for B2B trade finance — on Canton.**
 
+> ### ▶ [Open the live Operator Console](https://tradeguard-console-production.up.railway.app/?k=tg-9f93a696)
+> Running **live on the Canton Foundation's shared DevNet** (5N Seaport validator). Click **Seed book → Compute net → Approve & settle** and watch multilateral netting settle atomically on the real network — each firm sees only its own obligations, only the operator sees the whole book. *(DevNet shared consensus is ~10–15× slower than local; a settle takes 30–90s — that's the real network being real.)*
+
 TradeGuard is a settlement-optimization application for the [Build on Canton](https://www.encodeclub.com/) hackathon. Its headline capability is the thing a transparent chain *cannot* safely do:
 
 > **Net a book of obligations across many parties who can't see each other's positions, then settle only the residuals — atomically.**

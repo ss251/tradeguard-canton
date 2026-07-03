@@ -116,6 +116,10 @@
     <div class="big-quote" style="margin-top:1.4em;font-size:clamp(1.1rem,2vw,1.6rem)">
       Rivals that owe each other can net the book and settle only the residual —<br>
       <b>without ever exposing their flow to each other.</b></div>
+    <a href="https://tradeguard-console-production.up.railway.app/?k=tg-9f93a696" target="_blank" rel="noopener"
+       style="display:inline-block;margin-top:1.8em;padding:.7em 1.4em;background:var(--ox);color:#f4f1ea;
+              font-family:var(--mono);font-size:.9rem;letter-spacing:.04em;text-decoration:none;border-radius:6px;
+              box-shadow:0 2px 12px rgba(124,45,45,.35)">▶&nbsp; Open the live console — running on Canton DevNet</a>
   </section>
 
   <!-- 2 PROBLEM -->
@@ -180,19 +184,20 @@
   <!-- 6 REAL -->
   <section class="slide">
     <div class="kicker">It's real — not a sandbox</div>
-    <h2>Deployed and running on a real Canton network.</h2>
+    <h2>Live on the Canton Foundation's shared DevNet.</h2>
     <div class="dvp">
-      <div class="leg">tokenized deposit</div><div class="swap">⇄</div><div class="leg">stablecoin</div>
-      <div style="margin-left:1em" class="sub">atomic DvP — the substrate under netting</div>
+      <div class="leg">USDCx</div><div class="swap">⇄</div><div class="leg">WrappedAmulet</div>
+      <div style="margin-left:1em" class="sub">cross-token atomic DvP — CIP-56 Token Standard</div>
     </div>
     <div class="chips">
-      <span class="chip"><b>14</b>&nbsp;Daml tests green</span>
-      <span class="chip"><b>3-validator</b>&nbsp;Canton LocalNet (not single-node)</span>
-      <span class="chip">JSON Ledger API <b>v2</b></span>
-      <span class="chip">daml-finance v4 patterns</span>
-      <span class="chip">live <b>role-switching UI</b></span>
+      <span class="chip"><b>33</b>&nbsp;Daml tests green</span>
+      <span class="chip"><b>5N Seaport</b>&nbsp;DevNet validator (real shared network)</span>
+      <span class="chip">real <b>OIDC</b> auth · JSON Ledger API <b>v2</b></span>
+      <span class="chip"><b>CIP-56</b>&nbsp;Token Standard (real Splice interfaces)</span>
+      <span class="chip">aggregate caps · maturity · failure re-net</span>
     </div>
-    <div class="why" style="margin-top:1.6em">Full flow verified live: <b>net → propose → human approve → atomic settle</b>. Click any party in the UI and see exactly what that party can see.</div>
+    <div class="why" style="margin-top:1.6em">Full flow verified live on the shared network: <b>net → propose → human approve → atomic settle</b>. Each firm sees only its own obligations; only the operator sees the whole book.
+      <a href="https://tradeguard-console-production.up.railway.app/?k=tg-9f93a696" target="_blank" rel="noopener" style="color:var(--ox);font-weight:600;text-decoration:underline">▶ Open the live console →</a></div>
   </section>
 
   <!-- 7 CLOSE -->
