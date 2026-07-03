@@ -1,0 +1,34 @@
+# Render.com blueprint — deploys the TradeGuard Operator Console (Python HTTP server)
+# pointed at the live Canton DevNet. One-click: Render dashboard -> New -> Blueprint ->
+# pick this repo. Secrets (TG_DEVNET_*) are set in the dashboard, NOT committed.
+services:
+  - type: web
+    name: tradeguard-console
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python ui/console_server.py
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: TG_NET
+        value: devnet
+      - key: PYTHON_VERSION
+        value: "3.11"
+      # ---- set these in the Render dashboard (Environment tab), do NOT commit ----
+      - key: TG_DEVNET_LEDGER
+        sync: false
+      - key: TG_DEVNET_TOKEN_URL
+        sync: false
+      - key: TG_DEVNET_CLIENT_ID
+        sync: false
+      - key: TG_DEVNET_CLIENT_SECRET
+        sync: false
+      - key: TG_DEVNET_AUDIENCE
+        sync: false
+      - key: TG_DEVNET_SCOPE
+        sync: false
+      - key: TG_PARTIES_JSON
+        sync: false
+      - key: TG_CONSOLE_PASSWORD
+        sync: false

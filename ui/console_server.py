@@ -205,7 +205,9 @@ def build_state(policy_text: str | None = None) -> dict:
     firm_holdings = sum(len(RealLedgerClient(parties[f]).query(HOLDING_T)) for f in FIRMS)
 
     return {
-        "network": "Canton LocalNet · 3 validators · JSON Ledger API v2",
+        "network": ("Canton DevNet · 5N Seaport validator · JSON Ledger API v2"
+                    if os.environ.get("TG_NET", "local").lower() == "devnet"
+                    else "Canton LocalNet · 3 validators · JSON Ledger API v2"),
         "book": book,
         "book_size": len(book),
         "privacy": privacy,
@@ -234,6 +236,21 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def _authed(self) -> bool:
+        """Optional gate: if TG_CONSOLE_PASSWORD is set, require ?k=<pw> (or an
+        X-Console-Key header). Keeps a public deploy from being wide-open to
+        anyone who guesses the URL, without adding a login UI."""
+        pw = os.environ.get("TG_CONSOLE_PASSWORD", "")
+        if not pw:
+            return True
+        from urllib.parse import parse_qs
+        q = parse_qs(urlparse(self.path).query)
+        if q.get("k", [""])[0] == pw:
+            return True
+        if self.headers.get("X-Console-Key", "") == pw:
+            return True
+        return False
+
     def _send(self, code, body, ctype="application/json"):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
@@ -247,6 +264,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         u = urlparse(self.path)
+        if u.path in ("/health", "/healthz"):
+            self._send(200, {"ok": True})
+            return
+        if not self._authed():
+            self._send(401, "<h2>TradeGuard Console</h2><p>Append <code>?k=YOUR_KEY</code> to the URL.</p>", "text/html")
+            return
         if u.path == "/":
             with open(os.path.join(HERE, "console.html")) as f:
                 self._send(200, f.read(), "text/html")
@@ -269,6 +292,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urlparse(self.path)
+        if not self._authed():
+            self._send(401, {"error": "unauthorized — append ?k=YOUR_KEY"})
+            return
         try:
             body = self._read_body()
             policy_text = (body.get("policy") or "").strip() or None
@@ -391,6 +417,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    port = 8090
-    print(f"TradeGuard Operator Console on http://localhost:{port}")
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    # Railway/cloud: bind 0.0.0.0 and honour $PORT. Local: default 127.0.0.1:8090.
+    port = int(os.environ.get("PORT", "8090"))
+    host = os.environ.get("HOST_BIND", "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1")
+    print(f"TradeGuard Operator Console on http://{host}:{port}  (network: {os.environ.get('TG_NET','local')})")
+    ThreadingHTTPServer((host, port), Handler).serve_forever()

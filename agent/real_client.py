@@ -100,6 +100,11 @@ def _auth_token() -> str:
 
 
 def load_real_parties() -> dict[str, str]:
+    # Cloud deploy (Railway): parties can be supplied via env as JSON, since the
+    # gitignored file isn't in the build. Env wins when present.
+    env_parties = os.environ.get("TG_PARTIES_JSON", "").strip()
+    if env_parties:
+        return json.loads(env_parties)
     with open(REAL_PARTIES) as f:
         return json.load(f)
 

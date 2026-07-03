@@ -262,6 +262,21 @@
 <div id="toast"></div>
 
 <script>
+// If the console is password-gated (?k=KEY in the URL), transparently attach the key
+// to every /api/ request so the existing fetch calls keep working unchanged.
+(function(){
+  const K = new URLSearchParams(location.search).get('k');
+  if(!K) return;
+  const _f = window.fetch;
+  window.fetch = (url, opts={}) => {
+    try {
+      if (typeof url === 'string' && url.startsWith('/api/')) {
+        url += (url.includes('?') ? '&' : '?') + 'k=' + encodeURIComponent(K);
+      }
+    } catch(e){}
+    return _f(url, opts);
+  };
+})();
 const $=s=>document.querySelector(s);
 let STATE=null, COMPUTED=false, JUST_SETTLED=false;
 
