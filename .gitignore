@@ -13,3 +13,6 @@ tradeguard-v3/**/*.dar
 .venv/
 tradeguard-v3/devnet-parties.json
 .tradeguard/
+
+# raw demo recording takes
+.demo-recording/

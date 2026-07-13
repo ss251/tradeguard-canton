@@ -228,6 +228,8 @@ def build_state(policy_text: str | None = None) -> dict:
         "open_batches": len(batches),
         "residual_holdings": firm_holdings,
         "token": token_state(parties),
+        # live ledger offset — advances on every auto-refresh, proving a real ledger binding
+        "ledger_offset": op._ledger_end(),
         "ts": time.strftime("%H:%M:%S"),
     }
 

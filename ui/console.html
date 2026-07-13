@@ -28,6 +28,48 @@
   .net .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:5px}
   .net .dot.down{background:var(--ox)}
 
+  /* hero story strip */
+  .hero{display:grid;grid-template-columns:1.55fr 1fr;gap:28px;align-items:center;
+    margin:20px 0 4px;padding:22px 24px;border:1px solid var(--line);background:var(--card)}
+  .hero .track{font-family:var(--mono);font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--ox);font-weight:600;margin-bottom:10px}
+  .hero h2{font-family:var(--serif);font-size:1.5rem;line-height:1.22;font-weight:500;
+    letter-spacing:-.01em;color:var(--ink)}
+  .hero h2 b{color:var(--ox)}
+  .hero .breaks{font-family:var(--mono);font-size:.8rem;line-height:1.5;color:var(--ink2);margin-top:12px}
+  .hero .breaks b{color:var(--ink)}
+  .hero .cta-wrap{text-align:center}
+  .hero .cta{font-family:var(--mono);font-size:.95rem;letter-spacing:.02em;font-weight:600;
+    padding:1em 1.4em;border:1.5px solid var(--ox);background:var(--ox);color:var(--paper);
+    cursor:pointer;transition:.15s;width:100%}
+  .hero .cta:hover{background:var(--ox2)}
+  .hero .cta .spin{display:inline-block;animation:sp 1s linear infinite}
+  .hero .cta-note{font-family:var(--mono);font-size:.66rem;color:var(--ink2);margin-top:9px;line-height:1.4}
+  .guided{font-family:var(--mono);font-size:.72rem;color:var(--ink2);letter-spacing:.02em;
+    margin:8px 0 0;line-height:1.4}
+  .guided b{color:var(--ink)}
+  @media(max-width:720px){.hero{grid-template-columns:1fr}}
+
+  /* core workflow bar */
+  .coremk{margin:18px 0 2px}
+  .coremk .lbl{font-family:var(--mono);font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--ox);font-weight:600;margin-bottom:8px}
+  .coremk .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:14px 16px;
+    border:1px solid var(--line);background:var(--paper2)}
+  .coremk .sep{flex:0 0 1px;align-self:stretch;background:var(--line);margin:0 2px}
+
+  /* advanced controls disclosure */
+  details.advanced{margin-top:18px;border:1px solid var(--line);background:var(--card)}
+  details.advanced>summary{font-family:var(--mono);font-size:.74rem;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--ink2);font-weight:600;padding:14px 18px;cursor:pointer;
+    list-style:none;display:flex;justify-content:space-between;align-items:center}
+  details.advanced>summary::-webkit-details-marker{display:none}
+  details.advanced>summary::after{content:"▸ show";color:var(--ox);font-size:.7rem}
+  details.advanced[open]>summary::after{content:"▾ hide"}
+  details.advanced>summary .st{color:var(--ink);font-weight:400;text-transform:none;letter-spacing:0}
+  details.advanced .inner{padding:0 18px 18px}
+  details.advanced .card{margin-top:14px}
+
   /* pipeline stepper */
   .pipe{display:flex;gap:0;margin:22px 0 8px;font-family:var(--mono);font-size:.74rem}
   .pipe .st{flex:1;padding:.7em .9em;border:1px solid var(--line);border-right:0;
@@ -116,6 +158,17 @@
   .foot{margin-top:26px;font-family:var(--mono);font-size:.68rem;color:var(--ink2);letter-spacing:.05em;border-top:1px solid var(--line);padding-top:12px}
   .detail{font-family:var(--mono);font-size:.78rem;color:var(--ink2);margin-top:6px;display:none;padding-left:140px}
   .detail.on{display:block}
+
+  /* on-ledger settlement receipt */
+  .receipt{border-left:3px solid var(--green);background:#eef2e7}
+  .receipt .rcpt-net{font-family:var(--mono);font-size:.86rem;font-weight:600;color:var(--green);margin-bottom:10px}
+  .receipt .rcpt-net::before{content:"● ";}
+  .receipt .evidence{font-family:var(--mono);font-size:.8rem;background:var(--paper);border:1px solid var(--line);padding:10px 12px}
+  .receipt .evidence .er{display:flex;justify-content:space-between;gap:12px;padding:.28em 0;border-bottom:1px dotted #ddd5c4}
+  .receipt .evidence .er:last-child{border-bottom:0}
+  .receipt .evidence .ek{color:var(--ink2);white-space:nowrap}
+  .receipt .evidence .ev{color:var(--ink);font-weight:500;text-align:right;word-break:break-all}
+  .receipt .rcpt-note{font-size:.78rem;color:var(--ink2);margin-top:10px;line-height:1.4;font-style:italic;font-family:var(--serif)}
 </style>
 </head>
 <body>
@@ -123,10 +176,24 @@
   <header>
     <div>
       <div class="title">Trade<b>Guard</b> · Operator Console</div>
-      <div class="sub">Private multilateral netting — drive the workflow on a live Canton network</div>
+      <div class="sub">Track A · Private DeFi &amp; Capital Markets — the private netting rail for competing fintechs</div>
     </div>
-    <div class="net" id="net"><span class="dot" id="netdot"></span><span id="netlabel">connecting…</span></div>
+    <div class="net" id="net"><span class="dot" id="netdot"></span><span id="netlabel">connecting…</span><br><span id="netoffset" style="opacity:.75"></span></div>
   </header>
+
+  <!-- hero story strip: who it's for, what breaks without it, one CTA -->
+  <div class="hero">
+    <div>
+      <div class="track">Track A · Private DeFi &amp; Capital Markets</div>
+      <h2>Competing fintechs net their book and settle only the residual — <b>without exposing their flow to each other.</b></h2>
+      <div class="breaks"><b>What breaks without it:</b> prefunding every payment corridor locks up working capital; the only alternative is a trusted netting hub that sees everyone's volumes and counterparty graph — leaking your customer base to a rival's clearer.</div>
+    </div>
+    <div class="cta-wrap">
+      <button class="cta" id="b_run" onclick="runFlow()">Run the real flow →</button>
+      <div class="cta-note">seeds a confidential book on a live Canton ledger — then compute the net and settle atomically</div>
+    </div>
+  </div>
+  <p class="guided"><b>A guided walkthrough of a real product</b> — every action below writes to a live Canton ledger, and each settlement returns an on-ledger receipt you can verify.</p>
 
   <!-- pipeline stepper -->
   <div class="pipe" id="pipe">
@@ -134,6 +201,21 @@
     <div class="st" data-step="1"><span class="n">2</span>COMPUTE NET</div>
     <div class="st" data-step="2"><span class="n">3</span>HUMAN APPROVAL</div>
     <div class="st" data-step="3"><span class="n">4</span>ATOMIC SETTLE</div>
+  </div>
+
+  <!-- core workflow: the three actions that tell the whole story -->
+  <div class="coremk">
+    <div class="lbl">Core workflow — seed → compute → settle</div>
+    <div class="bar">
+      <button id="b_seed" class="ghost" onclick="doSeed()">Load a live book</button>
+      <button id="b_compute" onclick="doCompute()" disabled>Compute net</button>
+      <button id="b_settle" class="green" onclick="openGate()" disabled>Approve &amp; settle</button>
+      <div class="sep"></div>
+      <button id="b_partial" class="ghost" onclick="seedPartial()">Scenario: constrained settle</button>
+      <button id="b_adv" class="ox" onclick="doAdversarial()">Reject a fraudulent proposal (live)</button>
+      <button id="b_breach" class="ox" onclick="doCreditBreach()">Reject a credit-limit breach (live)</button>
+      <button class="ghost" onclick="refresh()" title="refresh state">↻</button>
+    </div>
   </div>
 
   <div class="grid">
@@ -181,6 +263,9 @@
         </div>
       </div>
 
+      <details class="advanced">
+        <summary>Advanced risk controls <span class="st">FX · token standard · liquidity floors · aggregate caps</span></summary>
+        <div class="inner">
       <div class="card" style="margin-top:18px">
         <h3>Cross-currency (FX) <span class="tag">co-signed rate</span></h3>
         <div style="font-family:var(--mono);font-size:.82rem;color:var(--ink2);margin-bottom:8px">The FX rate is an on-ledger contract <b>signed by every party</b>. A EUR debt nets against a USD debt only at a rate all parties agreed to — the operator can't pick it. Netting conserves <b>value</b> at that rate.</div>
@@ -215,6 +300,8 @@
           <button class="ghost" onclick="clearAll()">Clear ALL constraints</button>
         </div>
       </div>
+        </div>
+      </details>
 
       <div class="card" style="margin-top:18px">
         <h3>Privacy — who sees the book <span class="tag">live, per party</span></h3>
@@ -231,15 +318,14 @@
         <div class="banner" id="banner"></div>
       </div>
 
-      <div class="actions">
-        <button id="b_seed" class="ghost" onclick="doSeed()">Seed book</button>
-        <button id="b_partial" class="ghost" onclick="seedPartial()">Demo: partial settle</button>
-        <button id="b_compute" onclick="doCompute()" disabled>Compute net</button>
-        <button id="b_settle" class="green" onclick="openGate()" disabled>Approve &amp; settle</button>
-        <button id="b_adv" class="ox" onclick="doAdversarial()">Test: reject fraud</button>
-        <button id="b_breach" class="ox" onclick="doCreditBreach()">Test: reject credit breach</button>
-        <button class="ghost" onclick="refresh()">↻</button>
+      <!-- on-ledger settlement receipt: proves the ledger did the work, IN the UI -->
+      <div class="card receipt" id="receiptcard" style="margin-top:18px;display:none">
+        <h3>On-ledger Settlement Receipt <span class="tag">proof it settled on Canton</span></h3>
+        <div class="rcpt-net" id="rcpt_net">—</div>
+        <div class="evidence" id="rcpt_evidence"></div>
+        <div class="rcpt-note">These identifiers are the ledger's own record of this settlement — the batch contract, its update, and the committed offset. Verifiable independently against the Canton ledger; nothing here is simulated.</div>
       </div>
+
     </div>
   </div>
 
@@ -293,6 +379,7 @@ function setPipe(step){ // 0 book,1 compute,2 approval,3 settled
 function render(st){
   STATE=st;
   $('#netlabel').textContent=st.network;
+  if(st.ledger_offset!=null) $('#netoffset').textContent='ledger offset '+st.ledger_offset;
   $('#netdot').className='dot';
   // book
   const tb=$('#bookbody');
@@ -388,6 +475,35 @@ function renderLimits(st){
 
 function banner(kind,msg){const b=$('#banner');b.className='banner '+kind;b.textContent=msg;}
 
+// truncate a long id in the middle so it stays one line but still recognisable
+function truncMid(s,head=12,tail=8){ s=String(s||''); return s.length<=head+tail+1 ? s : s.slice(0,head)+'…'+s.slice(-tail); }
+
+// compact one-line on-ledger evidence for banners (item 8)
+function evLine(d){
+  const bits=[];
+  if(d.batch_cid) bits.push('batch '+truncMid(d.batch_cid));
+  if(d.limit_cid) bits.push('limit '+truncMid(d.limit_cid));
+  if(d.update_id) bits.push('update '+truncMid(d.update_id));
+  if(d.offset!=null) bits.push('offset '+d.offset);
+  if(!bits.length) return '';
+  return '<div style="font-family:var(--mono);font-size:.74rem;color:var(--ink2);margin-top:6px;word-break:break-all">⛓ on-ledger — '+bits.join(' · ')+(d.network?' · '+d.network:'')+'</div>';
+}
+
+// render the on-ledger settlement receipt from a settle response (item 1)
+function renderReceipt(d){
+  if(!d || !d.ok){ $('#receiptcard').style.display='none'; return; }
+  $('#rcpt_net').textContent = d.network || 'Canton ledger';
+  const rows=[];
+  if(d.batch_cid) rows.push(['batch contract', truncMid(d.batch_cid), d.batch_cid]);
+  if(d.update_id) rows.push(['update id', truncMid(d.update_id), d.update_id]);
+  if(d.offset!=null) rows.push(['ledger offset', String(d.offset), String(d.offset)]);
+  if(d.discharged!=null) rows.push([d.discharged+' obligations discharged', d.residuals+' residual leg(s)', '']);
+  if(d.elapsed_ms!=null) rows.push(['settled in', d.elapsed_ms+' ms', '']);
+  $('#rcpt_evidence').innerHTML = rows.map(([k,v,title])=>
+    `<div class="er"><span class="ek">${k}</span><span class="ev"${title?` title="${title}"`:''}>${v}</span></div>`).join('');
+  $('#receiptcard').style.display='block';
+}
+
 async function refresh(){
   try{const r=await fetch('/api/console/state');const st=await r.json();render(st);}
   catch(e){$('#netlabel').textContent='backend offline';$('#netdot').className='dot down';}
@@ -397,16 +513,25 @@ function busy(id,on,label){const b=$(id);b.disabled=on;
   if(on){b.dataset.t=b.textContent;b.innerHTML='<span class="spin">◠</span> '+(label||'working');}
   else if(b.dataset.t){b.textContent=b.dataset.t;}}
 
+// hero CTA: kick off the guided flow (seed a live book) and scroll to the workflow
+async function runFlow(){
+  const b=$('#b_run'); b.disabled=true; const t=b.textContent;
+  b.innerHTML='<span class="spin">◠</span> seeding a live book…';
+  try{ await doSeed(); document.querySelector('.coremk').scrollIntoView({behavior:'smooth',block:'center'});
+    toast('Book is live on the ledger — now Compute net → Approve & settle'); }
+  finally{ b.disabled=false; b.textContent=t; }
+}
 async function doSeed(){
   busy('#b_seed',true,'seeding');
   try{const r=await fetch('/api/console/seed',{method:'POST'});const d=await r.json();
     COMPUTED=false; JUST_SETTLED=false; $('#plancard').style.display='none';
+    $('#receiptcard').style.display='none';
     $('#banner').className='banner'; render(d.state);
     toast(d.ok?'Book seeded on-ledger':'seed failed',!d.ok);}
   catch(e){toast('seed error',true);} finally{busy('#b_seed',false);}
 }
 async function seedPartial(){
-  busy('#b_partial',true,'seeding partial-settle demo');
+  busy('#b_partial',true,'staging constrained-settle scenario');
   try{const r=await fetch('/api/console/seed-partial',{method:'POST'});const d=await r.json();
     COMPUTED=true; JUST_SETTLED=false; $('#banner').className='banner'; render(d.state);
     toast(d.ok?'Seeded forcing book + caps — Compute net to see the partial settle':'seed failed',!d.ok);
@@ -436,7 +561,7 @@ async function doSettle(){
   try{const r=await fetch('/api/console/settle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({policy:POLICY})});const d=await r.json();
     if(d.infeasible){ COMPUTED=true; render(d.state);
       toast('infeasible under limits — not settled',true); }
-    else { COMPUTED=false; JUST_SETTLED=d.ok; render(d.state);
+    else { COMPUTED=false; JUST_SETTLED=d.ok; render(d.state); renderReceipt(d);
       if(d.ok) toast('✓ Settled atomically on-ledger'+(d.credit_limits_enforced?` (${d.credit_limits_enforced} limit(s) enforced)`:'')); else toast('settle failed',true); }}
   catch(e){toast('settle error',true);} finally{busy('#b_settle',false);}
 }
@@ -483,8 +608,8 @@ async function settleFx(){
     const fb=$('#fxbanner'); fb.style.display='block';
     if(d.ok){ JUST_SETTLED=true; COMPUTED=false; render(d.state);
       fb.className='banner ok';
-      fb.textContent='✓ Cross-currency settled at '+d.fx_rate+': '+d.gross_obligations_mixed_ccy+
-        ' mixed-ccy gross → '+d.residual_total_usd+' USD in '+d.usd_residuals+' residual(s); '+d.discharged+' obligations discharged';
+      fb.innerHTML='✓ Cross-currency settled at '+d.fx_rate+': '+d.gross_obligations_mixed_ccy+
+        ' mixed-ccy gross → '+d.residual_total_usd+' USD in '+d.usd_residuals+' residual(s); '+d.discharged+' obligations discharged'+evLine(d);
       toast('✓ Cross-currency settled by value');
     } else if(d.infeasible){ fb.className='banner rej';
       fb.textContent='⃠ infeasible: '+(d.binding_constraints||[]).join('; '); toast('infeasible',true);
@@ -527,7 +652,7 @@ async function tokenSettleCross(){
       const per=Object.entries(rep).map(([i,x])=>`${i}: ${x.gross_value}→${x.net_value} (${x.netting_efficiency_pct}%)`).join(' · ');
       tb.innerHTML='✓ CROSS-TOKEN ATOMIC SETTLE — '+d.leg_count+' residual legs across '+(d.instruments||[]).length+
         ' tokens settled in ONE transaction.<br><span style="font-size:.82rem">'+per+
-        ' &nbsp;·&nbsp; total '+d.total_gross_all_instruments+'→'+d.total_net_all_instruments+'</span>';
+        ' &nbsp;·&nbsp; total '+d.total_gross_all_instruments+'→'+d.total_net_all_instruments+'</span>'+evLine(d);
       toast('✓ Cross-token atomic DvP settled');
     } else { tb.className='banner rej'; tb.textContent='error: '+(String(d.error||'failed').slice(0,180)); toast('cross-token settle failed',true); }
   }catch(e){toast('cross-token error',true);}
@@ -536,7 +661,7 @@ async function tokenSettleSingle(){
   const tb=$('#tokenbanner'); tb.style.display='block'; tb.className='banner'; tb.textContent='netting USDCx + settling…';
   try{const r=await fetch('/api/console/token-settle',{method:'POST'});const d=await r.json();
     if(d.ok){ render(d.state); tb.className='banner ok';
-      tb.textContent='✓ USDCx settled over CIP-56 holdings: '+d.gross_value+'→'+d.net_value+' ('+d.netting_efficiency_pct+'% netted), '+d.residual_count+' residual leg(s), atomic';
+      tb.innerHTML='✓ USDCx settled over CIP-56 holdings: '+d.gross_value+'→'+d.net_value+' ('+d.netting_efficiency_pct+'% netted), '+d.residual_count+' residual leg(s), atomic'+evLine(d);
       toast('✓ USDCx settled over token standard');
     } else { tb.className='banner rej'; tb.textContent='error: '+(String(d.error||'failed').slice(0,180)); toast('token settle failed',true); }
   }catch(e){toast('token settle error',true);}
@@ -551,8 +676,9 @@ async function doCreditBreach(){
   busy('#b_breach',true,'submitting breach to ledger');
   try{const r=await fetch('/api/console/credit-breach',{method:'POST'});const d=await r.json();
     if(d.rejected){
-      banner('rej','⃠ REJECTED BY THE LEDGER — '+(d.constraint||'credit limit breach')+
-        '. On-chain guard: "'+(d.ledger_error||'credit limit breached')+'"');
+      const b=$('#banner'); b.className='banner rej';
+      b.innerHTML='⃠ REJECTED BY THE LEDGER — '+(d.constraint||'credit limit breach')+
+        '. On-chain guard: "'+(d.ledger_error||'credit limit breached')+'"'+evLine(d);
       toast('Ledger rejected the credit breach ✓');
     } else if(d.error){ banner('rej','error: '+d.error); toast('error',true); }
     else { toast('unexpected: not rejected',true); }
@@ -563,8 +689,9 @@ async function doAdversarial(){
   busy('#b_adv',true,'submitting fraud to ledger');
   try{const r=await fetch('/api/console/adversarial',{method:'POST'});const d=await r.json();
     if(d.rejected){
-      banner('rej','⃠ REJECTED BY THE LEDGER — '+(d.fraud||'fraudulent under-settlement')+
-        '. On-chain guard: "'+(d.ledger_error||'conservation violated')+'"');
+      const b=$('#banner'); b.className='banner rej';
+      b.innerHTML='⃠ REJECTED BY THE LEDGER — '+(d.fraud||'fraudulent under-settlement')+
+        '. On-chain guard: "'+(d.ledger_error||'conservation violated')+'"'+evLine(d);
       toast('Ledger rejected the fraud ✓');
     } else if(d.error){ banner('rej','error: '+d.error); toast('error',true); }
     else { toast('unexpected: not rejected',true); }

@@ -36,6 +36,12 @@ DEMO_BOOK = [
 ]
 
 
+def _net_label() -> str:
+    return ("Canton DevNet · 5N Seaport validator"
+            if os.environ.get("TG_NET", "local").lower() in ("devnet", "dev")
+            else "Canton LocalNet · 3 validators")
+
+
 def _op() -> RealLedgerClient:
     p = load_real_parties()
     return RealLedgerClient(p["operator"])
@@ -188,6 +194,11 @@ def settle_token(instrument: str = "USDCx", book=None) -> dict:
         "netting_efficiency_pct": report["netting_efficiency_pct"],
         "residual_legs": legs,
         "settlement_cid": scid,
+        # on-ledger receipt evidence
+        "batch_cid": scid,
+        "update_id": ex.get("updateId") if isinstance(ex, dict) else None,
+        "offset": ex.get("completionOffset") if isinstance(ex, dict) else None,
+        "network": _net_label(),
     }
 
 
@@ -377,6 +388,11 @@ def settle_cross_token(book=None) -> dict:
         "leg_count": len(all_legs),
         "settlement_cid": scid,
         "atomic": True,
+        # on-ledger receipt evidence
+        "batch_cid": scid,
+        "update_id": ex.get("updateId") if isinstance(ex, dict) else None,
+        "offset": ex.get("completionOffset") if isinstance(ex, dict) else None,
+        "network": _net_label(),
     }
 
 
