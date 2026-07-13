@@ -2,7 +2,7 @@
 
 _Last updated: 2026-07-04 — LIVE on Canton DevNet + public Operator Console deployed._
 
-## STATE: COMPLETE, DEPLOYED, PUBLICLY DEMOABLE
+## STATE: COMPLETE, DEPLOYED, LIVE & PUBLICLY OPERABLE
 
 - **Repo:** github.com/ss251/tradeguard-canton (main)
 - **Live Operator Console:** https://tradeguard-console-production.up.railway.app/?k=tg-9f93a696
@@ -34,7 +34,7 @@ on-ledger guards.
   the whole book** (genuine Canton sub-transaction privacy — verified live: operator sees
   all 12, each firm sees only its own 8, an outsider sees 0).
 - Netting brain (LP/MILP solver, PuLP/CBC) computes the minimal residual flow; residuals
-  discharge + settle atomically or not at all. 360 gross → 70 residual (80.6% never moves).
+  discharge + settle atomically or not at all. 565 gross → 100 residual (82.3% never moves).
 - On-ledger adversarial guards: value conservation, efficiency, funding — a fraudulent
   under-settlement is **rejected by the ledger**, not trusted.
 

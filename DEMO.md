@@ -55,7 +55,7 @@ Open `http://localhost:8080`. Click through the role tabs.
 python3 -m agent.cli net
 ```
 > "And because privacy makes it safe, the agent can do something a public chain
-> can't: multilateral netting. Five obligations across three firms, \$360k gross —
+> can't: multilateral netting. Twelve obligations across three firms, \$565k gross —
 > nets down to two residual transfers, \$70k. 80% of the value never has to move.
 > Those residuals settle atomically as one batch. You can only net positions you're
 > allowed to see — privacy is what makes the optimization legal."

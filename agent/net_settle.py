@@ -19,7 +19,7 @@ The Daml -> v2 JSON encoding (learned from live payloads):
   enum        -> bare string ("TransferableFungible", "Pending")
 """
 from __future__ import annotations
-import sys, os
+import sys, os, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agent.real_client import RealLedgerClient, load_real_parties
 from agent.netting import Obligation, minimal_settlement, net_positions
@@ -28,6 +28,13 @@ USD_ID = "USD"
 FIRMS = ["firma", "firmb", "firmc", "firmd", "firme"]  # support up to 5 firms
 ACC = {"firma": "A-cash", "firmb": "B-cash", "firmc": "C-cash",
        "firmd": "D-cash", "firme": "E-cash"}
+
+
+def _network_label() -> str:
+    """Human-readable network label for on-ledger receipts."""
+    return ("Canton DevNet · 5N Seaport validator"
+            if os.environ.get("TG_NET", "local").lower() in ("devnet", "dev")
+            else "Canton LocalNet · 3 validators")
 
 
 def _id(t: str) -> dict:
@@ -242,9 +249,10 @@ def seed_book(dense: bool = True) -> dict:
     if dense:
         # 12 obligations, criss-crossing. Net positions still resolve to A as sole
         # net payer (so the on-ledger settle path holds), but the GROSS is much larger.
-        # A out: 100+50+60+40=250 ; A in: 80+30+20=130 -> A net -120
-        # B out: 100+30+25=155 ; B in: 100+60+20=180 -> B net +25
-        # C out: 80+20+20=120 ; C in: 50+40+30+25=145 -> C net +95  (check: -120+25+95=0)
+        # A out: 100+50+60+40=250 ; A in: 30+80+20+20=150 -> A net -100
+        # B out: 100+30+25+20=175 ; B in: 100+60+20+20=200 -> B net +25
+        # C out: 80+20+20+20=140 ; C in: 50+40+100+25=215 -> C net +75  (check: -100+25+75=0)
+        # gross 565 -> residual 100 (A->B 25, A->C 75): 82.3% netted out
         book = [
             (A, B, 100.0, "A->B inv1"), (A, C, 50.0, "A->C inv2"),
             (A, B, 60.0, "A->B inv3"),  (A, C, 40.0, "A->C inv4"),
@@ -326,6 +334,7 @@ def settle_real(policy_text: str | None = None, maximal: bool = True,
     failure for that party (its residual legs get an underfunded holding, so the
     on-ledger settle rejects atomically; used to prove the re-net loop end-to-end).
     """
+    t0 = time.time()
     parties = load_real_parties()
     bank = parties["netbank"]
     operator = parties["operator"]
@@ -487,6 +496,13 @@ def settle_real(policy_text: str | None = None, maximal: bool = True,
             "deferred_gross": round(gross - settled_gross, 2),
             "settlement_rate_pct": getattr(plan, "settlement_rate_pct", 100.0),
             "deferral_reasons": getattr(plan, "deferral_reasons", []),
+            # ── on-ledger settlement receipt (proves this hit a real Canton ledger) ──
+            "batch_cid": batch_cid,
+            "update_id": rs.get("updateId") if isinstance(rs, dict) else None,
+            "offset": rs.get("completionOffset") if isinstance(rs, dict) else None,
+            "discharged_cids": obl_cids[:8],
+            "elapsed_ms": round((time.time() - t0) * 1000),
+            "network": _network_label(),
             "policy": policy_info}
 
 
@@ -603,7 +619,11 @@ def attempt_fraud() -> dict:
         return {"ok": True, "rejected": True,
                 "fraud": f"{payer_short} proposed to pay {recv_short} only {fraud_amt:.0f} "
                          f"of {full_owed:.0f} owed",
-                "ledger_error": msg[:300]}
+                "ledger_error": msg[:300],
+                # on-ledger anchor: the batch the ledger refused to settle, at this offset
+                "batch_cid": batch_cid,
+                "offset": op._ledger_end(),
+                "network": _network_label()}
     # should not happen
     return {"ok": True, "rejected": False,
             "warn": "ledger accepted the under-settlement (unexpected!)"}
@@ -687,7 +707,12 @@ def attempt_credit_breach() -> dict:
         return {"ok": True, "rejected": True,
                 "constraint": f"{big.sender} -> {big.receiver} capped at {cap:.0f} "
                               f"USD (true net owes {big.amount:.0f})",
-                "ledger_error": msg[:300]}
+                "ledger_error": msg[:300],
+                # on-ledger anchors: the seeded CreditLimit + the batch the ledger refused
+                "limit_cid": cl_cid,
+                "batch_cid": batch_cid,
+                "offset": op._ledger_end(),
+                "network": _network_label()}
     return {"ok": True, "rejected": False,
             "warn": "ledger accepted a plan over the credit limit (unexpected!)"}
 
@@ -818,6 +843,11 @@ def settle_cross_currency() -> dict:
             "gross_obligations_mixed_ccy": gross, "usd_residuals": len(residuals),
             "residual_total_usd": round(sum(a for (_, _, a) in residuals), 2),
             "discharged": len(obl_cids),
+            # on-ledger receipt evidence
+            "batch_cid": batch_cid,
+            "update_id": rs.get("updateId") if isinstance(rs, dict) else None,
+            "offset": rs.get("completionOffset") if isinstance(rs, dict) else None,
+            "network": _network_label(),
             "rationale": plan.rationale}
 
 

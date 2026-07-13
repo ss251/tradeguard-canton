@@ -1,15 +1,19 @@
 # TradeGuard
 
-**Private multilateral netting + atomic settlement for B2B trade finance — on Canton.**
+**The private settlement rail where competing fintechs net their book and settle only the residual — atomically, without exposing their flow to each other. Live on Canton DevNet.**
+
+*For payment fintechs, neobanks, and PSPs that owe each other across corridors: stop prefunding every corridor and stop leaking your flow to a trusted clearer.*
+
+**Submitting to: Track A — Private DeFi & Capital Markets.** Why: multilateral netting over confidential positions + atomic settlement is capital-markets clearing infrastructure; privacy is the differentiator a transparent chain can't provide.
 
 > ### ▶ [Open the live Operator Console](https://tradeguard-console-production.up.railway.app/?k=tg-9f93a696)
-> Running **live on the Canton Foundation's shared DevNet** (5N Seaport validator). Click **Seed book → Compute net → Approve & settle** and watch multilateral netting settle atomically on the real network — each firm sees only its own obligations, only the operator sees the whole book. *(DevNet shared consensus is ~10–15× slower than local; a settle takes 30–90s — that's the real network being real.)*
+> Running **live on the Canton Foundation's shared DevNet** (5N Seaport validator). Click **Load a live book → Compute net → Approve & settle** and watch multilateral netting settle atomically on the real network — every settlement returns an **on-ledger receipt** (batch contract id, update id, ledger offset) surfaced right in the console. Each firm sees only its own obligations; only the operator sees the whole book. *(DevNet shared consensus is ~10–15× slower than local; a settle takes 30–90s — that's the real network being real.)*
 
 TradeGuard is a settlement-optimization application for the [Build on Canton](https://www.encodeclub.com/) hackathon. Its headline capability is the thing a transparent chain *cannot* safely do:
 
 > **Net a book of obligations across many parties who can't see each other's positions, then settle only the residuals — atomically.**
 
-A governed AI agent, acting as an authorized netting operator, is the only party that sees the whole book. It computes the multilateral net, proposes the minimal residual settlement, waits for human approval, and then discharges every obligation **and** moves only the residual cash in a single all-or-nothing transaction. In our live run, **5 obligations across 3 firms (360 gross) net to 2 transfers (70) — 80.6% of value never moves.**
+A governed AI agent, acting as an authorized netting operator, is the only party that sees the whole book. It computes the multilateral net, proposes the minimal residual settlement, waits for human approval, and then discharges every obligation **and** moves only the residual cash in a single all-or-nothing transaction. In our live run, **12 obligations across 3 firms (565 gross) net to 2 transfers (100) — 82.3% of value never moves.**
 
 It is:
 
@@ -60,8 +64,8 @@ Run it: `source ~/.tradeguard/devnet.env && scripts/devnet_demo.sh` — 8 steps 
 | `tradeguard-v3/main/daml/TradeGuard/Netting.daml` | **Private multilateral netting** — Obligation + NettingBatch w/ on-ledger adversarial guards, `CreditLimit`, co-signed `FXRate` (value conservation), `LiquidityFloor`. |
 | `tradeguard/daml/` | Institution-grade Daml model (daml-finance v4 patterns): Holdings, Instruments, atomic batch settlement, attestation gating. |
 | `tradeguard-v3/` | Canton 3.x (DPM/SDK 3.4.11) keyless port — the **real-network deploy target** (`tradeguard 1.3.0`). |
-| `tradeguard-v3/test/daml/TradeGuard/Test/` | **20 Daml Script tests** — netting, privacy, atomicity, credit-limit reject, cross-currency FX settle, unsigned-rate reject, value-violation reject, liquidity-floor reject. |
-| `agent/solver.py` | The optimizer — LP (PuLP/CBC) residual-flow netting under credit limits, FX rates (`solve_fx`), and liquidity floors. **11 tests.** |
+| `tradeguard-v3/test/daml/TradeGuard/Test/` | **33 Daml Script tests** — netting, privacy, atomicity, credit-limit reject, aggregate-cap reject, obligation maturity, cross-currency FX settle, unsigned-rate reject, value-violation reject, liquidity-floor reject, CIP-56 token settlement + cross-token DvP. |
+| `agent/solver.py` | The optimizer — LP (PuLP/CBC) residual-flow netting under credit limits, FX rates (`solve_fx`), and liquidity floors. **17 tests.** |
 | `agent/policy.py` | **NL risk policy → validated constraints** (real `claude` CLI + rules fallback). **10 tests.** |
 | `agent/limits.py` | On-ledger lifecycle for `CreditLimit`, co-signed `FXRate`, `LiquidityFloor` — the single-source-of-truth bridge to the solver. |
 | `agent/` | The off-chain reasoning agent (Python): `real_client`, `net_settle`, `reasoner`, `netting`, `cli`. |
@@ -83,11 +87,12 @@ python3 ui/console_server.py     # -> http://localhost:8090
 ```
 
 Then drive the whole workflow from the browser, against the live ledger:
-**Seed book** → **Compute net** (the agent's plan: 360 → 70, 80.6% netted) →
-**Approve & settle** (human-approval gate → atomic on-ledger settlement). Then exercise
-the Phase 2 surface: type a **Risk Policy** in English and watch the plan go infeasible
-with the binding constraint; seed an **on-ledger Credit Limit** and hit **Test: reject
-credit breach** (the ledger refuses); run **Seed USD+EUR book → Settle cross-currency**
+**Load a live book** → **Compute net** (the agent's plan: 565 → 100, 82.3% netted) →
+**Approve & settle** (human-approval gate → atomic on-ledger settlement; an **on-ledger
+receipt** — batch contract id, update id, ledger offset — surfaces right in the console).
+Then exercise the Phase 2 surface: type a **Risk Policy** in English and watch the plan go
+infeasible with the binding constraint; seed an **on-ledger Credit Limit** and hit **Reject
+a credit-limit breach (live)** (the ledger refuses); run **Seed USD+EUR book → Settle cross-currency**
 (trustless FX netting at a co-signed rate); seed a **Liquidity Floor**. The privacy
 panel shows, live and per-party, that each firm sees only its own obligations while only
 the operator sees the whole book.
@@ -138,11 +143,17 @@ TG_REAL=1 python3 -m agent.cli status    # agent reads the real ledger
 
 ## Tests
 
+**Prerequisite for the Daml suite:** `dpm` (the Daml Package Manager) installs to
+`~/.dpm/bin/dpm`. Put it on your PATH (`export PATH="$HOME/.dpm/bin:$PATH"`) or invoke it by
+full path (`~/.dpm/bin/dpm test`). The DAR must be built first — see `ARCHITECTURE.md` for
+the one-time toolchain setup (JDK + Daml SDK). A fresh clone without `dpm` on PATH will get
+`command not found`; that's the PATH gap, not a broken test.
+
 ```bash
 # Daml ledger logic (33 scripts: netting, privacy, atomicity, credit limits, AGGREGATE
 # exposure caps, obligation maturity, cross-currency FX at a co-signed rate,
 # unsigned-rate reject, liquidity floors, CIP-56 token settlement + cross-token DvP):
-cd tradeguard-v3/test && dpm test
+cd tradeguard-v3/test && ~/.dpm/bin/dpm test      # or: export PATH="$HOME/.dpm/bin:$PATH" && dpm test
 
 # Python (agent brain), from the repo root, using the project venv:
 .venv/bin/python -m agent.test_solver            # 17 solver tests (netting, limits, agg caps, FX, floors)

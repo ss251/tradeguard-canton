@@ -53,7 +53,7 @@ validator.")*
 **ACTION:** Click **Compute net.**
 
 > "Now the agent — the only party that can see the whole book — computes the multilateral
-> net. Twelve obligations, 360 units of gross exposure, collapse to **two residual
+> net. Twelve obligations, 565 units of gross exposure, collapse to **two residual
 > transfers. Eighty percent of the value never has to move.** That's the liquidity the
 > old model locks up in prefunding."
 
@@ -132,7 +132,7 @@ cross-token.**
 ## Beat checklist (for the editor)
 1. Hook — the wedge in one breath ✅
 2. Privacy panel — operator 12 / firms 8 / outsider 0 ✅
-3. Compute net — 360 → 70, 80% never moves ✅
+3. Compute net — 565 → 100, 82% never moves ✅
 4. Human approve → atomic settle on DevNet ✅
 5. Adversarial reject (ledger, not agent) ✅
 6. Aggregate cap defers ✅

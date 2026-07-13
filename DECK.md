@@ -52,7 +52,7 @@ sees 5, Outsider sees 0.)
 5. **Settles atomically** — discharges every obligation **and** moves only the
    residual cash in ONE transaction. All-or-nothing.
 
-> Live demo number: **5 obligations / 360 gross → 2 transfers / 70 net. 80.6% never
+> Live demo number: **12 obligations / 565 gross → 2 transfers / 100 net. 82.3% never
 > moves.**
 
 ---
@@ -97,7 +97,7 @@ agent**, not the other way around. NettingBatch enforces on-chain:
 ## 3-minute video shot list
 1. (0:00–0:20) Problem: obligation web + gross settlement / Herstatt.
 2. (0:20–0:40) Insight: privacy enables netting. Show the live privacy table.
-3. (0:40–1:30) Live terminal: `seed book → agent nets → 360→70 → human approve →
+3. (0:40–1:30) Live terminal: `seed book → agent nets → 565→100 → human approve →
    atomic settle`. Show obligations discharged.
 4. (1:30–2:00) Adversarial: run the fraudulent proposal → ledger rejects it.
 5. (2:00–2:30) Live UI: switch FirmA / FirmB / Operator / Outsider — privacy is real.
