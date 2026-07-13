@@ -10,7 +10,7 @@ network, step by step, the way an operator would:
   3. POST /api/console/compute          -> agent computes the multilateral net (off-chain brain)
   4. POST /api/console/settle           -> human-approved atomic settle of residuals (on-ledger)
   5. POST /api/console/adversarial      -> submit a fraudulent proposal; the ledger rejects it
-  6. POST /api/console/reset            -> note: obligations are consumed by settle; reseed to replay
+  6. POST /api/console/reset            -> clear the demo book + constraints; reseed nothing
 
 The settle/seed steps shell out to the deployed Daml Scripts (the same ones the
 demo uses), so the console drives the *real* ledger — not a mock. Read steps use
@@ -180,12 +180,16 @@ def build_state(policy_text: str | None = None) -> dict:
     # operator sees the whole book — that's the canonical book
     book = _obligations_for("operator", parties)
 
-    # per-party privacy panel: how many each viewer sees
+    # Per-party privacy panel + the same compact rows for the judge-facing view
+    # switcher. Reuse these reads so the state endpoint stays small and predictable.
     privacy = []
+    books_by_party = {"operator": book, "outsider": []}
     for key, label in VIEWERS:
-        obls = _obligations_for(key, parties)
+        obls = book if key == "operator" else _obligations_for(key, parties)
         privacy.append({"key": key, "label": label, "count": len(obls),
                         "refs": [o["ref"] for o in obls]})
+        if key in FIRMS:
+            books_by_party[key] = obls
 
     # the agent's plan: the CONSTRAINED solver over the operator's book under the
     # live on-ledger credit limits (+ optional policy steering)
@@ -210,6 +214,7 @@ def build_state(policy_text: str | None = None) -> dict:
                     else "Canton LocalNet · 3 validators · JSON Ledger API v2"),
         "book": book,
         "book_size": len(book),
+        "books_by_party": books_by_party,
         "privacy": privacy,
         "plan": plan,
         "credit_limits": [
@@ -232,6 +237,42 @@ def build_state(policy_text: str | None = None) -> dict:
         "ledger_offset": op._ledger_end(),
         "ts": time.strftime("%H:%M:%S"),
     }
+
+
+def reset_demo() -> dict:
+    """Return the console to an empty-book judge state using existing clear paths.
+
+    The operator can already discharge the obligations it sees and cancel its open
+    batches (the seed helpers do the same). Constraint archival remains delegated to
+    ``limits.clear_all`` so reset has no broader party authority than today's flows.
+    """
+    parties = load_real_parties()
+    op = RealLedgerClient(parties["operator"])
+    cleared = {"obligations": 0, "batches": 0}
+    errors = []
+
+    for contract in op.query(OBL_T):
+        result = op.exercise(OBL_T, contract["contractId"], "Discharge", {})
+        if isinstance(result, dict) and result.get("_http_error"):
+            errors.append(result.get("_body", "failed to discharge obligation"))
+        else:
+            cleared["obligations"] += 1
+
+    for contract in op.query(BATCH_T):
+        result = op.exercise(
+            BATCH_T, contract["contractId"], "CancelNetting",
+            {"actor": parties["operator"]})
+        if isinstance(result, dict) and result.get("_http_error"):
+            errors.append(result.get("_body", "failed to cancel batch"))
+        else:
+            cleared["batches"] += 1
+
+    constraints = limmod.clear_all(parties)
+    if not all(v.get("ok", True) for v in constraints.values() if isinstance(v, dict)):
+        errors.append("one or more on-ledger constraints could not be cleared")
+
+    return {"ok": not errors, "cleared": cleared,
+            "constraints": constraints, "errors": errors}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -381,6 +422,11 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == "/api/console/clear-all":
                 # clear every on-ledger constraint (limits, fx, floors)
                 res = limmod.clear_all()
+                res["state"] = build_state()
+                self._send(200, res)
+            elif u.path == "/api/console/reset":
+                # Judge mode: clear the live book + constraints and reseed nothing.
+                res = reset_demo()
                 res["state"] = build_state()
                 self._send(200, res)
             elif u.path == "/api/console/token-seed":

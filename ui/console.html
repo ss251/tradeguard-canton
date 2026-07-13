@@ -12,6 +12,7 @@
     --paper:#f4f1ea; --paper2:#ece7dc; --card:#faf8f3; --ink:#1c1a17; --ink2:#5a554c;
     --line:#cfc7b6; --ox:#7c2d2d; --ox2:#9c4a3c; --green:#3f6b4f; --amber:#9a7016;
     --mono:'IBM Plex Mono',ui-monospace,monospace; --serif:'Newsreader',Georgia,serif;
+    --ease-out:cubic-bezier(0.23,1,0.32,1); --ease-in-out:cubic-bezier(0.77,0,0.175,1);
   }
   *{box-sizing:border-box;margin:0;padding:0}
   body{background:var(--paper);color:var(--ink);font-family:var(--serif);
@@ -41,9 +42,8 @@
   .hero .cta-wrap{text-align:center}
   .hero .cta{font-family:var(--mono);font-size:.95rem;letter-spacing:.02em;font-weight:600;
     padding:1em 1.4em;border:1.5px solid var(--ox);background:var(--ox);color:var(--paper);
-    cursor:pointer;transition:.15s;width:100%}
-  .hero .cta:hover{background:var(--ox2)}
-  .hero .cta .spin{display:inline-block;animation:sp 1s linear infinite}
+    cursor:pointer;transition:background-color 150ms ease,color 150ms ease,opacity 200ms ease,transform 160ms var(--ease-out);width:100%}
+  .hero .cta .spin{display:inline-block;animation:sp 700ms linear infinite}
   .hero .cta-note{font-family:var(--mono);font-size:.66rem;color:var(--ink2);margin-top:9px;line-height:1.4}
   .guided{font-family:var(--mono);font-size:.72rem;color:var(--ink2);letter-spacing:.02em;
     margin:8px 0 0;line-height:1.4}
@@ -73,7 +73,8 @@
   /* pipeline stepper */
   .pipe{display:flex;gap:0;margin:22px 0 8px;font-family:var(--mono);font-size:.74rem}
   .pipe .st{flex:1;padding:.7em .9em;border:1px solid var(--line);border-right:0;
-    background:var(--paper2);color:var(--ink2);position:relative;letter-spacing:.04em}
+    background:var(--paper2);color:var(--ink2);position:relative;letter-spacing:.04em;
+    transition:background-color 200ms ease,color 200ms ease}
   .pipe .st:last-child{border-right:1px solid var(--line)}
   .pipe .st.active{background:var(--ink);color:var(--paper)}
   .pipe .st.done{background:#e7ecdf;color:var(--green);border-color:#bcd0bc}
@@ -85,14 +86,31 @@
     color:var(--ox);font-weight:600;margin-bottom:14px;display:flex;justify-content:space-between}
   .card h3 .tag{color:var(--ink2);font-weight:400}
 
+  .reveal-card{opacity:0;transform:translateY(8px);
+    transition:opacity 200ms var(--ease-out),transform 200ms var(--ease-out)}
+  .reveal-card.show{opacity:1;transform:translateY(0)}
+
   /* obligation book */
   table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:.86rem}
   th{text-align:left;font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;
     color:var(--ink2);font-weight:600;padding:.4em .5em;border-bottom:1px solid var(--line)}
   td{padding:.45em .5em;border-bottom:1px solid #e4ddcd}
-  td.amt{text-align:right;font-weight:500}
+  td.amt{text-align:right;font-weight:500;font-variant-numeric:tabular-nums}
   .arrow{color:var(--ox)}
   .empty{color:var(--ink2);font-style:italic;font-family:var(--serif);padding:1.5em 0;text-align:center}
+  .bookviewport{min-width:0}
+  #booktbl{opacity:1;transition:opacity 75ms ease}
+  #booktbl.swapping{opacity:0}
+  .bookrow{animation:rowIn 250ms var(--ease-out) both;animation-delay:var(--row-delay,0ms)}
+  @keyframes rowIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+  .bookvoid{height:96px;padding:1.5em 1em;color:var(--ink2);font-family:var(--mono);
+    font-size:.78rem;letter-spacing:.03em;text-align:center;background:var(--paper2)}
+  .bookvoid b{display:block;color:var(--ox);font-weight:500;margin-bottom:.4em}
+  .party-tabs{display:flex;flex-wrap:wrap;align-items:center;margin:-4px 0 12px;
+    border-bottom:1px solid var(--line)}
+  .party-tabs button{border:0;border-bottom:2px solid transparent;background:transparent;color:var(--ink2);
+    font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;padding:.55em .7em;margin-bottom:-1px}
+  .party-tabs button[aria-selected="true"]{color:var(--ox);border-bottom-color:var(--ox);background:var(--paper2)}
 
   /* net plan */
   .netbox .row{display:flex;justify-content:space-between;font-family:var(--mono);
@@ -106,16 +124,19 @@
   .bignum{display:flex;gap:0;margin:14px 0;border:1px solid var(--line)}
   .bignum .c{flex:1;padding:.8em 1em;border-right:1px solid var(--line);text-align:center}
   .bignum .c:last-child{border-right:0}
-  .bignum .v{font-family:var(--mono);font-size:1.5rem;font-weight:600}
+  .bignum .v{font-family:var(--mono);font-size:1.5rem;font-weight:600;font-variant-numeric:tabular-nums}
   .bignum .v.ox{color:var(--ox)} .bignum .v.green{color:var(--green)}
   .bignum .k{font-family:var(--mono);font-size:.6rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink2);margin-top:.4em}
 
   /* privacy panel */
-  .privrow{display:flex;align-items:center;gap:10px;padding:.5em 0;border-bottom:1px solid #e4ddcd;cursor:pointer}
-  .privrow:hover{background:var(--paper2)}
+  .privrow{display:flex;align-items:center;gap:10px;padding:.5em 0;border-bottom:1px solid #e4ddcd;cursor:pointer;
+    transition:background-color 150ms ease,color 150ms ease}
+  .privrow.priv-in{animation:privacyIn 250ms var(--ease-out) both;animation-delay:var(--row-delay,0ms)}
+  @keyframes privacyIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
   .privrow .lbl{flex:0 0 130px;font-family:var(--mono);font-size:.82rem}
   .privrow .bar{flex:1;height:14px;background:#e4ddcd;position:relative;overflow:hidden}
-  .privrow .bar i{position:absolute;left:0;top:0;bottom:0;background:var(--ink)}
+  .privrow .bar i{position:absolute;left:0;top:0;bottom:0;background:var(--ink);
+    transition:width 300ms var(--ease-out)}
   .privrow.op .bar i{background:var(--ox)}
   .privrow.out .bar i{background:transparent}
   .privrow .cnt{flex:0 0 30px;text-align:right;font-family:var(--mono);font-weight:600;font-size:.86rem}
@@ -126,31 +147,50 @@
   .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px;align-items:center}
   button{font-family:var(--mono);font-size:.82rem;letter-spacing:.03em;padding:.7em 1.2em;
     border:1.5px solid var(--ink);background:var(--ink);color:var(--paper);cursor:pointer;
-    transition:.15s;font-weight:500}
-  button:hover{background:#000}
+    transition:background-color 150ms ease,color 150ms ease,opacity 200ms ease,transform 160ms var(--ease-out);font-weight:500}
+  button:active:not(:disabled){transform:scale(.97)}
   button.ghost{background:transparent;color:var(--ink)}
-  button.ghost:hover{background:var(--paper2)}
-  button.ox{background:var(--ox);border-color:var(--ox)} button.ox:hover{background:var(--ox2)}
-  button.green{background:var(--green);border-color:var(--green)} button.green:hover{filter:brightness(1.1)}
+  button.ox{background:var(--ox);border-color:var(--ox)}
+  button.green{background:var(--green);border-color:var(--green)}
   button:disabled{opacity:.35;cursor:not-allowed}
-  button .spin{display:inline-block;animation:sp 1s linear infinite}
+  button .spin{display:inline-block;animation:sp 700ms linear infinite}
+  button.unlock-pulse{position:relative}
+  button.unlock-pulse::after{content:"";position:absolute;inset:-4px;border:1px solid var(--ox);pointer-events:none;
+    animation:unlock 900ms var(--ease-out) 2 both}
   @keyframes sp{to{transform:rotate(360deg)}}
+  @keyframes unlock{0%,100%{opacity:0}45%{opacity:.7}}
+
+  :is(button,input,summary,[role="tab"]):focus-visible{outline:2px solid var(--ox);outline-offset:2px}
+  @media (hover:hover) and (pointer:fine){
+    .hero .cta:hover,button.ox:hover{background:var(--ox2)}
+    button:hover{background:#000}
+    button.ghost:hover,.party-tabs button:hover{background:var(--paper2)}
+    button.green:hover{opacity:.88}
+    .privrow:hover{background:var(--paper2)}
+  }
 
   /* approval gate modal */
-  .gate{position:fixed;inset:0;background:rgba(20,18,15,.55);display:none;
-    align-items:center;justify-content:center;z-index:10}
+  .gate{position:fixed;inset:0;background:rgba(20,18,15,.55);display:none;opacity:0;
+    align-items:center;justify-content:center;z-index:10;transition:opacity 150ms ease}
   .gate.on{display:flex}
-  .gate .box{background:var(--card);border:2px solid var(--ink);max-width:520px;padding:28px 30px}
+  .gate.show{opacity:1;transition-duration:200ms}
+  .gate .box{background:var(--card);border:2px solid var(--ink);max-width:520px;padding:28px 30px;
+    opacity:0;transform:scale(.97);transform-origin:center;
+    transition:opacity 150ms var(--ease-out),transform 150ms var(--ease-out)}
+  .gate.show .box{opacity:1;transform:scale(1);transition-duration:220ms}
   .gate h4{font-family:var(--mono);font-size:.8rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ox);margin-bottom:12px}
   .gate p{font-size:1.05rem;line-height:1.45;margin-bottom:8px}
   .gate .det{font-family:var(--mono);font-size:.82rem;background:var(--paper2);padding:10px 12px;margin:14px 0;border-left:3px solid var(--ox)}
   .gate .btns{display:flex;gap:10px;margin-top:18px}
 
   /* log / toast */
-  #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+  #toast{position:fixed;bottom:20px;left:50%;transform:translate(-50%,12px);
     background:var(--ink);color:var(--paper);font-family:var(--mono);font-size:.82rem;
-    padding:.8em 1.3em;border-radius:2px;opacity:0;transition:.3s;pointer-events:none;z-index:20;max-width:80vw}
-  #toast.on{opacity:1}
+    padding:.8em 1.3em;border-radius:2px;opacity:0;
+    transition:opacity 250ms var(--ease-out),transform 250ms var(--ease-out),background-color 150ms ease;
+    pointer-events:none;z-index:20;max-width:80vw}
+  #toast.on{opacity:1;transform:translate(-50%,0)}
+  #toast.leaving{opacity:0;transform:translate(-50%,6px);transition-duration:150ms}
   #toast.err{background:var(--ox)}
   .banner{margin-top:14px;padding:.7em 1em;font-family:var(--mono);font-size:.84rem;display:none}
   .banner.ok{display:block;background:#e7ecdf;border-left:3px solid var(--green);color:var(--green)}
@@ -158,6 +198,33 @@
   .foot{margin-top:26px;font-family:var(--mono);font-size:.68rem;color:var(--ink2);letter-spacing:.05em;border-top:1px solid var(--line);padding-top:12px}
   .detail{font-family:var(--mono);font-size:.78rem;color:var(--ink2);margin-top:6px;display:none;padding-left:140px}
   .detail.on{display:block}
+
+  /* truthful settlement progress over one in-flight HTTP request */
+  .consensus{display:none;margin-top:18px;border:1px solid var(--line);border-left:3px solid var(--amber);
+    background:var(--card);padding:14px 16px;opacity:0;transform:translateY(6px);
+    transition:opacity 200ms var(--ease-out),transform 200ms var(--ease-out)}
+  .consensus.on{display:block;opacity:1;transform:translateY(0)}
+  .consensus.collapsing{opacity:0;transform:translateY(-4px);transition-duration:150ms}
+  .consensus .eyebrow{font-family:var(--mono);font-size:.65rem;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--amber);font-weight:600;margin-bottom:10px}
+  .consensus .stages{display:grid;gap:7px}
+  .consensus .stage{display:grid;grid-template-columns:20px minmax(0,1fr);gap:7px;align-items:start;
+    color:var(--ink2);font-family:var(--mono);font-size:.72rem;line-height:1.35}
+  .consensus .mark{width:18px;height:18px;border:1px solid var(--line);border-radius:50%;display:grid;
+    place-items:center;font-size:.62rem;font-variant-numeric:tabular-nums}
+  .consensus .stage.done{color:var(--green)}
+  .consensus .stage.done .mark{border-color:var(--green);background:#e7ecdf}
+  .consensus .stage.active{color:var(--ink)}
+  .consensus .stage.active .mark{border-color:var(--amber);background:#f5edd6;color:var(--amber)}
+  .consensus .elapsed{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ox)}
+  .consensus .caption{display:block;color:var(--ink2);font-family:var(--serif);font-size:.76rem;font-style:italic;margin-top:2px}
+
+  .first-hint{display:none;align-items:center;justify-content:space-between;gap:14px;margin:8px 0 0;
+    padding:9px 12px;border-left:2px solid var(--ox);background:var(--paper2);color:var(--ink2);
+    font-family:var(--mono);font-size:.7rem;line-height:1.4}
+  .first-hint.on{display:flex}
+  .first-hint button{border:0;background:transparent;color:var(--ox);padding:.2em .35em;white-space:nowrap}
+  .reset-demo{margin-left:auto}
 
   /* on-ledger settlement receipt */
   .receipt{border-left:3px solid var(--green);background:#eef2e7}
@@ -169,6 +236,20 @@
   .receipt .evidence .ek{color:var(--ink2);white-space:nowrap}
   .receipt .evidence .ev{color:var(--ink);font-weight:500;text-align:right;word-break:break-all}
   .receipt .rcpt-note{font-size:.78rem;color:var(--ink2);margin-top:10px;line-height:1.4;font-style:italic;font-family:var(--serif)}
+
+  .net,.bignum .v,td.amt,.privrow .cnt,.receipt .evidence,.consensus{font-variant-numeric:tabular-nums}
+
+  @media(max-width:900px){.grid{grid-template-columns:1fr}.reset-demo{margin-left:0}}
+  @media (prefers-reduced-motion:reduce){
+    .gate .box,.reveal-card,.consensus{transform:none!important}
+    #toast,#toast.on,#toast.leaving{transform:translateX(-50%)!important}
+    .bookrow,.privrow.priv-in{animation:fadeOnly 200ms ease both}
+    button.unlock-pulse::after{animation:fadeOnly 500ms ease both}
+    button .spin,.hero .cta .spin{animation:none}
+    button:active:not(:disabled){transform:none}
+    .privrow .bar i{transition-duration:0ms}
+  }
+  @keyframes fadeOnly{from{opacity:0}to{opacity:1}}
 </style>
 </head>
 <body>
@@ -202,6 +283,10 @@
     <div class="st" data-step="2"><span class="n">3</span>HUMAN APPROVAL</div>
     <div class="st" data-step="3"><span class="n">4</span>ATOMIC SETTLE</div>
   </div>
+  <div class="first-hint" id="firsthint">
+    <span>Follow the numbers: load a book → compute the net → approve. Every write returns a ledger receipt.</span>
+    <button type="button" onclick="dismissHint()" aria-label="Dismiss walkthrough hint">Dismiss</button>
+  </div>
 
   <!-- core workflow: the three actions that tell the whole story -->
   <div class="coremk">
@@ -209,12 +294,13 @@
     <div class="bar">
       <button id="b_seed" class="ghost" onclick="doSeed()">Load a live book</button>
       <button id="b_compute" onclick="doCompute()" disabled>Compute net</button>
-      <button id="b_settle" class="green" onclick="openGate()" disabled>Approve &amp; settle</button>
+      <button id="b_settle" class="green" data-settle-action onclick="openGate()" disabled>Approve &amp; settle</button>
       <div class="sep"></div>
       <button id="b_partial" class="ghost" onclick="seedPartial()">Scenario: constrained settle</button>
       <button id="b_adv" class="ox" onclick="doAdversarial()">Reject a fraudulent proposal (live)</button>
       <button id="b_breach" class="ox" onclick="doCreditBreach()">Reject a credit-limit breach (live)</button>
       <button class="ghost" onclick="refresh()" title="refresh state">↻</button>
+      <button class="ghost reset-demo" id="b_reset" onclick="resetDemo()">Reset demo</button>
     </div>
   </div>
 
@@ -223,11 +309,20 @@
     <div>
       <div class="card">
         <h3>Confidential Obligation Book <span class="tag" id="booktag">operator's view</span></h3>
-        <table id="booktbl"><thead><tr><th>Payer</th><th></th><th>Payee</th><th>Ref</th><th class="amt">Amount</th></tr></thead>
-          <tbody id="bookbody"><tr><td colspan="5" class="empty">No book yet — seed one to begin.</td></tr></tbody></table>
+        <div class="party-tabs" role="tablist" aria-label="Obligation book party view">
+          <button type="button" role="tab" data-party="operator" aria-selected="true" onclick="switchParty('operator')">Operator</button>
+          <button type="button" role="tab" data-party="firma" aria-selected="false" onclick="switchParty('firma')">FirmA</button>
+          <button type="button" role="tab" data-party="firmb" aria-selected="false" onclick="switchParty('firmb')">FirmB</button>
+          <button type="button" role="tab" data-party="firmc" aria-selected="false" onclick="switchParty('firmc')">FirmC</button>
+          <button type="button" role="tab" data-party="outsider" aria-selected="false" onclick="switchParty('outsider')">Outsider</button>
+        </div>
+        <div class="bookviewport" id="bookviewport">
+          <table id="booktbl"><thead><tr><th>Payer</th><th></th><th>Payee</th><th>Ref</th><th class="amt">Amount</th></tr></thead>
+            <tbody id="bookbody"><tr><td colspan="5" class="empty">No book yet — seed one to begin.</td></tr></tbody></table>
+        </div>
       </div>
 
-      <div class="card netbox" id="plancard" style="margin-top:18px;display:none">
+      <div class="card netbox reveal-card" id="plancard" style="margin-top:18px;display:none">
         <h3>Agent's Netting Plan <span class="tag">off-chain brain · auditable</span></h3>
         <div style="font-family:var(--mono);font-size:.7rem;color:var(--ink2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Net positions</div>
         <div class="netpos" id="netpos"></div>
@@ -272,7 +367,7 @@
         <div id="fxlist" style="font-family:var(--mono);font-size:.86rem;line-height:1.8;color:var(--ink2)">— no FX rate set —</div>
         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
           <button class="ghost" onclick="seedFx()">Seed USD+EUR book @ 1.2</button>
-          <button class="green" onclick="settleFx()">Settle cross-currency</button>
+          <button class="green" id="b_settle_fx" data-settle-action onclick="settleFx()">Settle cross-currency</button>
         </div>
         <div class="banner" id="fxbanner" style="display:none"></div>
       </div>
@@ -283,8 +378,8 @@
         <div id="tokenlist" style="font-family:var(--mono);font-size:.86rem;line-height:1.8;color:var(--ink2)">— no token holdings —</div>
         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
           <button class="ghost" onclick="tokenSeed()">Mint USDCx + WrappedAmulet book</button>
-          <button class="green" onclick="tokenSettleCross()">Settle CROSS-TOKEN (atomic)</button>
-          <button class="ghost" onclick="tokenSettleSingle()">Settle USDCx only</button>
+          <button class="green" id="b_settle_token_cross" data-settle-action onclick="tokenSettleCross()">Settle CROSS-TOKEN (atomic)</button>
+          <button class="ghost" id="b_settle_token_single" data-settle-action onclick="tokenSettleSingle()">Settle USDCx only</button>
         </div>
         <div class="banner" id="tokenbanner" style="display:none"></div>
       </div>
@@ -318,8 +413,18 @@
         <div class="banner" id="banner"></div>
       </div>
 
+      <div class="consensus" id="consensus" role="status" aria-live="polite">
+        <div class="eyebrow">Settlement progress · one live ledger request</div>
+        <div class="stages">
+          <div class="stage" data-consensus="1"><span class="mark">1</span><span class="stage-label">Human approval captured</span></div>
+          <div class="stage" data-consensus="2"><span class="mark">2</span><span>Submitted to validator</span></div>
+          <div class="stage" data-consensus="3"><span class="mark">3</span><span>Awaiting <span id="consensus_network">DevNet</span> consensus — <span class="elapsed" id="consensus_elapsed">00:00</span><small class="caption">shared network, typically 30–90s</small></span></div>
+          <div class="stage" data-consensus="4"><span class="mark">4</span><span>Committed</span></div>
+        </div>
+      </div>
+
       <!-- on-ledger settlement receipt: proves the ledger did the work, IN the UI -->
-      <div class="card receipt" id="receiptcard" style="margin-top:18px;display:none">
+      <div class="card receipt reveal-card" id="receiptcard" style="margin-top:18px;display:none">
         <h3>On-ledger Settlement Receipt <span class="tag">proof it settled on Canton</span></h3>
         <div class="rcpt-net" id="rcpt_net">—</div>
         <div class="evidence" id="rcpt_evidence"></div>
@@ -333,10 +438,10 @@
 </div>
 
 <!-- human approval gate -->
-<div class="gate" id="gate">
+<div class="gate" id="gate" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="gate-title">
   <div class="box">
-    <h4>Human approval required</h4>
-    <p>The agent has computed a netting plan. It <b>cannot settle on its own.</b> Approve to write an on-ledger <span style="font-family:var(--mono)">ApprovedAction</span> and execute the atomic settlement.</p>
+    <h4 id="gate-title">Human approval required</h4>
+    <p>The agent has computed a netting plan. It <b>cannot settle on its own.</b> Approve to submit the atomic settlement; the committed Canton identifiers return in the receipt.</p>
     <div class="det" id="gatedet"></div>
     <div class="btns">
       <button class="green" onclick="doSettle()">Approve &amp; settle</button>
@@ -364,16 +469,53 @@
   };
 })();
 const $=s=>document.querySelector(s);
-let STATE=null, COMPUTED=false, JUST_SETTLED=false;
+const REDUCED_MOTION=window.matchMedia('(prefers-reduced-motion: reduce)');
+const HASHES={};
+const BUSY=new Set();
+const PARTY_LABELS={operator:'Operator',firma:'FirmA',firmb:'FirmB',firmc:'FirmC',outsider:'Outsider'};
+let STATE=null,COMPUTED=false,JUST_SETTLED=false,IN_FLIGHT=false,POLICY='';
+let SELECTED_PARTY='operator',FIRST_RENDER=true,PRIVACY_ARRIVED=false;
+let BOOK_STAGGER_PENDING=false,COUNTUP_PENDING=false,BOOK_MIN_HEIGHT=0;
+let toastTimer=null,toastExitTimer=null,gateTimer=null,consensusTimer=null,consensusDelay=null;
 
-function toast(msg,err){const t=$('#toast');t.textContent=msg;t.className='on'+(err?' err':'');
-  setTimeout(()=>t.className='',2600);}
+function hash(value){return JSON.stringify(value==null?null:value);}
+function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({
+  '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+function toast(msg,err){
+  const t=$('#toast'); clearTimeout(toastTimer); clearTimeout(toastExitTimer);
+  t.textContent=msg; t.className=err?'err':'';
+  requestAnimationFrame(()=>t.classList.add('on'));
+  toastTimer=setTimeout(()=>{t.classList.remove('on');t.classList.add('leaving');
+    toastExitTimer=setTimeout(()=>t.className='',160);},2600);
+}
 
 function setPipe(step){ // 0 book,1 compute,2 approval,3 settled
   document.querySelectorAll('.pipe .st').forEach(el=>{
     const s=+el.dataset.step; el.classList.remove('active','done');
     if(s<step) el.classList.add('done'); else if(s===step) el.classList.add('active');
+    el.querySelector('.n').textContent=s<step?'✓':String(s+1);
   });
+}
+
+function setActionEnabled(id,enabled){
+  const b=$(id); if(!b)return;
+  const wasEnabled=b.dataset.logicalEnabled==='1';
+  b.dataset.logicalEnabled=enabled?'1':'0';
+  b.dataset.logicalDisabled=enabled?'0':'1';
+  b.disabled=!enabled||BUSY.has(id)||(IN_FLIGHT&&b.matches('[data-settle-action]'));
+  if(!FIRST_RENDER&&enabled&&!wasEnabled){
+    b.classList.remove('unlock-pulse'); void b.offsetWidth; b.classList.add('unlock-pulse');
+    setTimeout(()=>b.classList.remove('unlock-pulse'),1900);
+  }
+}
+
+function busy(id,on,label){
+  const b=$(id); if(!b)return;
+  if(on){BUSY.add(id);b.disabled=true;b.dataset.t=b.textContent;
+    b.innerHTML='<span class="spin">◠</span> '+(label||'working');}
+  else {BUSY.delete(id);if(b.dataset.t){b.textContent=b.dataset.t;delete b.dataset.t;}
+    b.disabled=b.dataset.logicalDisabled==='1'||(IN_FLIGHT&&b.matches('[data-settle-action]'));}
 }
 
 function render(st){
@@ -381,44 +523,120 @@ function render(st){
   $('#netlabel').textContent=st.network;
   if(st.ledger_offset!=null) $('#netoffset').textContent='ledger offset '+st.ledger_offset;
   $('#netdot').className='dot';
-  // book
-  const tb=$('#bookbody');
-  if(st.book && st.book.length){
-    tb.innerHTML=st.book.map(o=>`<tr><td>${o.payer}</td><td class="arrow">→</td><td>${o.payee}</td><td style="color:var(--ink2)">${o.ref}</td><td class="amt">${o.amount.toFixed(0)} USD</td></tr>`).join('');
-    $('#booktag').textContent=st.book_size+' obligations · operator\u2019s view';
-  } else {
-    tb.innerHTML='<tr><td colspan="5" class="empty">No book yet — seed one to begin.</td></tr>';
-    $('#booktag').textContent="operator's view";
-  }
-  // privacy
-  const maxc=Math.max(1,...st.privacy.map(p=>p.count));
-  $('#privacy').innerHTML=st.privacy.map(p=>{
-    const cls=p.key==='operator'?'op':(p.key==='netout'?'out':'');
-    const w=Math.round(p.count/maxc*100);
-    return `<div class="privrow ${cls}" onclick="this.nextElementSibling.classList.toggle('on')">
-      <div class="lbl">${p.label}</div><div class="bar"><i style="width:${w}%"></i></div>
-      <div class="cnt">${p.count}</div></div>
-      <div class="detail">${p.refs.length?p.refs.join(' · '):'— sees nothing —'}</div>`;
-  }).join('');
+  renderBook(false,BOOK_STAGGER_PENDING);
+  BOOK_STAGGER_PENDING=false;
+  renderPrivacy(st.privacy||[]);
   // status
   $('#s_batches').textContent=st.open_batches;
   $('#s_settled').textContent=(st.residual_holdings!=null?st.residual_holdings:st.settled_count);
   renderLimits(st);
   renderTokens(st);
   // plan
-  if(st.plan && COMPUTED){ renderPlan(st.plan); }
+  if(st.plan&&COMPUTED){
+    const next=hash(st.plan);
+    if(HASHES.plan!==next||COUNTUP_PENDING){
+      HASHES.plan=next;renderPlan(st.plan,COUNTUP_PENDING);COUNTUP_PENDING=false;
+    }
+  }
   // pipeline + button enablement
-  $('#b_compute').disabled = !(st.book_size>0);
-  $('#b_settle').disabled = !(st.book_size>0 && COMPUTED);
+  setActionEnabled('#b_compute',st.book_size>0);
+  setActionEnabled('#b_settle',st.book_size>0&&COMPUTED&&st.plan&&st.plan.feasible!==false);
   if(JUST_SETTLED && st.book_size===0){ setPipe(3);
     banner('ok','✓ Settled atomically — all obligations discharged, only the residual cash moved on-ledger.'); }
   else if(COMPUTED){ setPipe(2); }
   else if(st.book_size>0){ setPipe(1); }
   else { setPipe(0); }
+  FIRST_RENDER=false;
 }
 
-function renderPlan(plan){
-  $('#plancard').style.display='block';
+function booksForState(st){
+  if(st.books_by_party)return st.books_by_party;
+  return {operator:st.book||[],firma:[],firmb:[],firmc:[],outsider:[]};
+}
+
+function renderBook(force=false,animate=false){
+  if(!STATE)return;
+  const rows=booksForState(STATE)[SELECTED_PARTY]||[];
+  const next=hash({party:SELECTED_PARTY,rows});
+  if(!force&&HASHES.book===next)return;
+  HASHES.book=next;
+  document.querySelectorAll('.party-tabs [role="tab"]').forEach(tab=>
+    tab.setAttribute('aria-selected',tab.dataset.party===SELECTED_PARTY?'true':'false'));
+  const tb=$('#bookbody');
+  if(SELECTED_PARTY==='outsider'){
+    tb.innerHTML='<tr><td colspan="5" class="bookvoid"><b>— no record disclosed —</b>this is what a rival sees: nothing</td></tr>';
+  }else if(rows.length){
+    tb.innerHTML=rows.map((o,i)=>`<tr${animate?` class="bookrow" style="--row-delay:${Math.min(i*30,150)}ms"`:''}>`+
+      `<td>${esc(o.payer)}</td><td class="arrow">→</td><td>${esc(o.payee)}</td>`+
+      `<td style="color:var(--ink2)">${esc(o.ref)}</td><td class="amt">${Number(o.amount).toFixed(0)} USD</td></tr>`).join('');
+  }else{
+    const message=SELECTED_PARTY==='operator'?'No book yet — seed one to begin.':'No records disclosed in this view.';
+    tb.innerHTML=`<tr><td colspan="5" class="empty">${message}</td></tr>`;
+  }
+  const label=PARTY_LABELS[SELECTED_PARTY];
+  $('#booktag').textContent=`${rows.length} obligation${rows.length===1?'':'s'} · ${label}\u2019s view`;
+  requestAnimationFrame(()=>{
+    BOOK_MIN_HEIGHT=Math.max(BOOK_MIN_HEIGHT,$('#booktbl').offsetHeight);
+    $('#bookviewport').style.minHeight=BOOK_MIN_HEIGHT+'px';
+  });
+}
+
+function switchParty(party){
+  if(!PARTY_LABELS[party]||party===SELECTED_PARTY)return;
+  const table=$('#booktbl'); table.classList.add('swapping');
+  setTimeout(()=>{SELECTED_PARTY=party;renderBook(true,false);
+    requestAnimationFrame(()=>table.classList.remove('swapping'));},REDUCED_MOTION.matches?0:75);
+}
+
+function renderPrivacy(items){
+  const next=hash(items); if(HASHES.privacy===next)return; HASHES.privacy=next;
+  const root=$('#privacy'); const maxc=Math.max(1,...items.map(p=>p.count));
+  const keys=new Set(items.map(p=>p.key));
+  root.querySelectorAll('.privrow').forEach(row=>{
+    if(!keys.has(row.dataset.key)){const detail=row.nextElementSibling;row.remove();if(detail)detail.remove();}
+  });
+  const firstData=!PRIVACY_ARRIVED&&items.some(p=>p.count>0);
+  items.forEach((p,i)=>{
+    let row=root.querySelector(`.privrow[data-key="${p.key}"]`);
+    let detail=row&&row.nextElementSibling; const created=!row;
+    if(created){
+      row=document.createElement('div');row.className='privrow';row.dataset.key=p.key;row.tabIndex=0;row.setAttribute('role','button');
+      row.setAttribute('aria-expanded','false');
+      row.innerHTML='<div class="lbl"></div><div class="bar"><i style="width:0%"></i></div><div class="cnt"></div>';
+      detail=document.createElement('div');detail.className='detail';
+      const toggle=()=>{detail.classList.toggle('on');row.setAttribute('aria-expanded',detail.classList.contains('on')?'true':'false');};
+      row.addEventListener('click',toggle);row.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toggle();}});
+    }
+    row.classList.toggle('op',p.key==='operator');row.classList.toggle('out',p.key==='netout');
+    row.querySelector('.lbl').textContent=p.label;row.querySelector('.cnt').textContent=p.count;
+    detail.textContent=p.refs.length?p.refs.join(' · '):'— sees nothing —';
+    const fill=row.querySelector('.bar i');const width=Math.round(p.count/maxc*100)+'%';
+    if(created){fill.style.width='0%';requestAnimationFrame(()=>{fill.style.width=width;});}
+    else fill.style.width=width;
+    if(firstData){row.classList.remove('priv-in');row.style.setProperty('--row-delay',(i*40)+'ms');void row.offsetWidth;row.classList.add('priv-in');}
+    root.append(row,detail);
+  });
+  if(firstData){PRIVACY_ARRIVED=true;setTimeout(()=>root.querySelectorAll('.priv-in').forEach(r=>r.classList.remove('priv-in')),650);}
+}
+
+function showReveal(selector){
+  const el=$(selector);const hidden=el.style.display==='none'||getComputedStyle(el).display==='none';
+  if(hidden){el.style.display='block';el.classList.remove('show');requestAnimationFrame(()=>el.classList.add('show'));}
+  else el.classList.add('show');
+}
+function hideReveal(selector){const el=$(selector);el.classList.remove('show');el.style.display='none';}
+
+function animateMetric(selector,target,decimals=0,suffix=''){
+  const el=$(selector);target=Number(target)||0;
+  if(REDUCED_MOTION.matches){el.textContent=target.toFixed(decimals)+suffix;return;}
+  const started=performance.now();
+  function frame(now){const t=Math.min(1,(now-started)/600);const eased=1-Math.pow(1-t,3);
+    el.textContent=(target*eased).toFixed(decimals)+suffix;if(t<1)requestAnimationFrame(frame);}
+  requestAnimationFrame(frame);
+}
+
+function renderPlan(plan,animateNumbers=false){
+  showReveal('#plancard');
   // net positions: solver returns {currency: {party: net}}; flatten across currencies
   const flat={};
   if(plan.net_positions){
@@ -434,9 +652,10 @@ function renderPlan(plan){
     // INFEASIBLE under the constraints — show the binding constraint as a feature
     $('#residuals').innerHTML='<div class="banner rej" style="display:block">⃠ NO FEASIBLE SETTLEMENT under the current credit limits — '+
       (plan.binding_constraints||[]).join('; ')+'</div>';
-    $('#g_gross').textContent=plan.gross_obligations.toFixed(0);
+    if(animateNumbers)animateMetric('#g_gross',plan.gross_obligations);
+    else $('#g_gross').textContent=plan.gross_obligations.toFixed(0);
     $('#g_net').textContent='—'; $('#g_pct').textContent='infeasible';
-    $('#b_settle').disabled=true;
+    setActionEnabled('#b_settle',false);
     return;
   }
   $('#residuals').innerHTML=plan.residual_transfers.map(t=>
@@ -449,12 +668,21 @@ function renderPlan(plan){
       <span style="font-size:.82rem">${(plan.deferral_reasons||[]).join('; ')}</span><br>
       <span style="font-size:.8rem;opacity:.8">the rail settles what it can and keeps the rest live — it never just refuses</span></div>`;
   }
-  $('#g_gross').textContent=plan.gross_obligations.toFixed(0);
-  $('#g_net').textContent=plan.gross_residual.toFixed(0);
-  $('#g_pct').textContent=plan.netting_efficiency_pct+'%';
+  if(animateNumbers){
+    animateMetric('#g_gross',plan.gross_obligations);
+    animateMetric('#g_net',plan.gross_residual);
+    animateMetric('#g_pct',plan.netting_efficiency_pct,1,'%');
+  }else{
+    $('#g_gross').textContent=plan.gross_obligations.toFixed(0);
+    $('#g_net').textContent=plan.gross_residual.toFixed(0);
+    $('#g_pct').textContent=Number(plan.netting_efficiency_pct).toFixed(1)+'%';
+  }
 }
 
 function renderLimits(st){
+  const slice={credit_limits:st.credit_limits||[],fx_rates:st.fx_rates||[],
+    liquidity_floors:st.liquidity_floors||[],aggregate_limits:st.aggregate_limits||[]};
+  const next=hash(slice);if(HASHES.limits===next)return;HASHES.limits=next;
   const el=$('#limitslist'); const lims=st.credit_limits||[];
   el.innerHTML = lims.length
     ? lims.map(l=>`<div>${l.from} → ${l.to} &nbsp;<b>≤ ${l.limit.toFixed(0)} ${l.currency}</b></div>`).join('')
@@ -491,7 +719,7 @@ function evLine(d){
 
 // render the on-ledger settlement receipt from a settle response (item 1)
 function renderReceipt(d){
-  if(!d || !d.ok){ $('#receiptcard').style.display='none'; return; }
+  if(!d || !d.ok){ hideReveal('#receiptcard'); return; }
   $('#rcpt_net').textContent = d.network || 'Canton ledger';
   const rows=[];
   if(d.batch_cid) rows.push(['batch contract', truncMid(d.batch_cid), d.batch_cid]);
@@ -501,7 +729,7 @@ function renderReceipt(d){
   if(d.elapsed_ms!=null) rows.push(['settled in', d.elapsed_ms+' ms', '']);
   $('#rcpt_evidence').innerHTML = rows.map(([k,v,title])=>
     `<div class="er"><span class="ek">${k}</span><span class="ev"${title?` title="${title}"`:''}>${v}</span></div>`).join('');
-  $('#receiptcard').style.display='block';
+  showReveal('#receiptcard');
 }
 
 async function refresh(){
@@ -509,38 +737,35 @@ async function refresh(){
   catch(e){$('#netlabel').textContent='backend offline';$('#netdot').className='dot down';}
 }
 
-function busy(id,on,label){const b=$(id);b.disabled=on;
-  if(on){b.dataset.t=b.textContent;b.innerHTML='<span class="spin">◠</span> '+(label||'working');}
-  else if(b.dataset.t){b.textContent=b.dataset.t;}}
-
 // hero CTA: kick off the guided flow (seed a live book) and scroll to the workflow
 async function runFlow(){
   const b=$('#b_run'); b.disabled=true; const t=b.textContent;
   b.innerHTML='<span class="spin">◠</span> seeding a live book…';
-  try{ await doSeed(); document.querySelector('.coremk').scrollIntoView({behavior:'smooth',block:'center'});
+  try{ await doSeed(); document.querySelector('.coremk').scrollIntoView({behavior:REDUCED_MOTION.matches?'auto':'smooth',block:'center'});
     toast('Book is live on the ledger — now Compute net → Approve & settle'); }
   finally{ b.disabled=false; b.textContent=t; }
 }
 async function doSeed(){
   busy('#b_seed',true,'seeding');
   try{const r=await fetch('/api/console/seed',{method:'POST'});const d=await r.json();
-    COMPUTED=false; JUST_SETTLED=false; $('#plancard').style.display='none';
-    $('#receiptcard').style.display='none';
-    $('#banner').className='banner'; render(d.state);
+    BOOK_STAGGER_PENDING=(STATE?.book_size||0)===0&&(d.state?.book_size||0)>0;
+    COMPUTED=false;JUST_SETTLED=false;HASHES.plan=null;hideReveal('#plancard');hideReveal('#receiptcard');
+    $('#banner').className='banner';if(d.state)render(d.state);
     toast(d.ok?'Book seeded on-ledger':'seed failed',!d.ok);}
   catch(e){toast('seed error',true);} finally{busy('#b_seed',false);}
 }
 async function seedPartial(){
   busy('#b_partial',true,'staging constrained-settle scenario');
   try{const r=await fetch('/api/console/seed-partial',{method:'POST'});const d=await r.json();
-    COMPUTED=true; JUST_SETTLED=false; $('#banner').className='banner'; render(d.state);
+    BOOK_STAGGER_PENDING=(STATE?.book_size||0)===0&&(d.state?.book_size||0)>0;
+    COMPUTED=true;JUST_SETTLED=false;HASHES.plan=null;hideReveal('#receiptcard');$('#banner').className='banner';render(d.state);
     toast(d.ok?'Seeded forcing book + caps — Compute net to see the partial settle':'seed failed',!d.ok);
   }catch(e){toast('partial seed error',true);} finally{busy('#b_partial',false);}
 }
 async function doCompute(){
   busy('#b_compute',true,'computing');
   try{const r=await fetch('/api/console/compute',{method:'POST'});const d=await r.json();
-    COMPUTED=true; render(d.state); toast('Agent computed the multilateral net');}
+    COMPUTED=true;COUNTUP_PENDING=true;render(d.state);toast('Agent computed the multilateral net');}
   catch(e){toast('compute error',true);} finally{busy('#b_compute',false);}
 }
 function openGate(){
@@ -551,19 +776,64 @@ function openGate(){
   $('#gatedet').innerHTML=`net ${p.gross_obligations.toFixed(0)} → ${p.gross_residual.toFixed(0)} USD · `+
     p.residual_transfers.map(t=>`${t.sender}→${t.receiver} ${t.amount.toFixed(0)}`).join(' · ');
   $('#gatedet').style.display='block';
-  $('#gate').classList.add('on');
+  const gate=$('#gate');clearTimeout(gateTimer);gate.classList.add('on');gate.setAttribute('aria-hidden','false');
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{gate.classList.add('show');gate.querySelector('.green').focus();}));
 }
-function closeGate(){$('#gate').classList.remove('on');}
+function closeGate(){const gate=$('#gate');clearTimeout(gateTimer);gate.classList.remove('show');gate.setAttribute('aria-hidden','true');
+  gateTimer=setTimeout(()=>gate.classList.remove('on'),150);}
 
-let POLICY='';
+function setSettlementBusy(on){
+  IN_FLIGHT=on;
+  document.querySelectorAll('[data-settle-action]').forEach(button=>{
+    const id='#'+button.id;
+    button.disabled=on||BUSY.has(id)||button.dataset.logicalDisabled==='1';
+  });
+}
+
+function setConsensusStage(step,state){
+  const row=document.querySelector(`[data-consensus="${step}"]`);row.classList.remove('done','active');
+  if(state)row.classList.add(state);row.querySelector('.mark').textContent=state==='done'?'✓':String(step);
+}
+
+function updateConsensusElapsed(started){
+  const seconds=Math.max(0,Math.floor((Date.now()-started)/1000));
+  $('#consensus_elapsed').textContent=String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
+}
+
+function startConsensus(){
+  clearTimeout(consensusDelay);clearInterval(consensusTimer);setSettlementBusy(true);
+  const panel=$('#consensus');panel.className='consensus';
+  [1,2,3,4].forEach(n=>setConsensusStage(n,null));
+  setConsensusStage(1,'done');setConsensusStage(2,'active');$('#consensus_elapsed').textContent='00:00';
+  $('#consensus_network').textContent=STATE&&String(STATE.network).includes('DevNet')?'DevNet':'ledger';
+  requestAnimationFrame(()=>panel.classList.add('on'));
+  const started=Date.now();panel.dataset.started=String(started);
+  consensusDelay=setTimeout(()=>{setConsensusStage(2,'done');setConsensusStage(3,'active');
+    updateConsensusElapsed(started);consensusTimer=setInterval(()=>updateConsensusElapsed(started),1000);},1000);
+}
+
+function completeConsensus(){
+  clearTimeout(consensusDelay);clearInterval(consensusTimer);
+  const started=Number($('#consensus').dataset.started)||Date.now();updateConsensusElapsed(started);
+  [1,2,3,4].forEach(n=>setConsensusStage(n,'done'));
+}
+
+function rejectConsensus(){
+  clearTimeout(consensusDelay);clearInterval(consensusTimer);
+  const panel=$('#consensus');panel.classList.add('collapsing');
+  setTimeout(()=>{panel.className='consensus';},160);
+}
 async function doSettle(){
-  closeGate(); busy('#b_settle',true,'settling');
+  closeGate();startConsensus();busy('#b_settle',true,'awaiting consensus');
   try{const r=await fetch('/api/console/settle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({policy:POLICY})});const d=await r.json();
-    if(d.infeasible){ COMPUTED=true; render(d.state);
+    if(d.infeasible){rejectConsensus();COMPUTED=true;render(d.state);
       toast('infeasible under limits — not settled',true); }
-    else { COMPUTED=false; JUST_SETTLED=d.ok; render(d.state); renderReceipt(d);
-      if(d.ok) toast('✓ Settled atomically on-ledger'+(d.credit_limits_enforced?` (${d.credit_limits_enforced} limit(s) enforced)`:'')); else toast('settle failed',true); }}
-  catch(e){toast('settle error',true);} finally{busy('#b_settle',false);}
+    else {COMPUTED=false;JUST_SETTLED=d.ok;if(d.ok)completeConsensus();else rejectConsensus();
+      if(d.state)render(d.state);renderReceipt(d);
+      if(d.ok)toast('✓ Settled atomically on-ledger'+(d.credit_limits_enforced?` (${d.credit_limits_enforced} limit(s) enforced)`:''));
+      else{banner('rej','Settlement rejected — '+(d.error||'the ledger did not commit the request'));toast('settle failed',true);}}}
+  catch(e){rejectConsensus();banner('rej','Settlement request failed — no ledger commit.');toast('settle error',true);}
+  finally{busy('#b_settle',false);setSettlementBusy(false);}
 }
 
 async function applyPolicy(){
@@ -595,7 +865,8 @@ async function clearLimits(){
 async function seedFx(){
   busy('#b_seed',true,'seeding FX book');
   try{const r=await fetch('/api/console/seed-fx',{method:'POST'});const d=await r.json();
-    COMPUTED=false; JUST_SETTLED=false; $('#plancard').style.display='none'; $('#banner').className='banner';
+    BOOK_STAGGER_PENDING=(STATE?.book_size||0)===0&&(d.state?.book_size||0)>0;
+    COMPUTED=false;JUST_SETTLED=false;HASHES.plan=null;hideReveal('#plancard');hideReveal('#receiptcard');$('#banner').className='banner';
     render(d.state);
     const fb=$('#fxbanner'); fb.style.display='block'; fb.className='banner ok';
     fb.textContent='✓ Seeded USD+EUR book (4 obligations) + co-signed rate '+(d.fx_rate||'1 EUR = 1.2 USD');
@@ -603,18 +874,18 @@ async function seedFx(){
   }catch(e){toast('fx seed error',true);} finally{busy('#b_seed',false);}
 }
 async function settleFx(){
-  busy('#b_settle',true,'settling cross-currency');
+  startConsensus();busy('#b_settle_fx',true,'awaiting consensus');
   try{const r=await fetch('/api/console/settle-fx',{method:'POST'});const d=await r.json();
     const fb=$('#fxbanner'); fb.style.display='block';
-    if(d.ok){ JUST_SETTLED=true; COMPUTED=false; render(d.state);
+    if(d.ok){completeConsensus();JUST_SETTLED=true;COMPUTED=false;render(d.state);renderReceipt(d);
       fb.className='banner ok';
       fb.innerHTML='✓ Cross-currency settled at '+d.fx_rate+': '+d.gross_obligations_mixed_ccy+
         ' mixed-ccy gross → '+d.residual_total_usd+' USD in '+d.usd_residuals+' residual(s); '+d.discharged+' obligations discharged'+evLine(d);
       toast('✓ Cross-currency settled by value');
-    } else if(d.infeasible){ fb.className='banner rej';
+    } else if(d.infeasible){rejectConsensus();fb.className='banner rej';
       fb.textContent='⃠ infeasible: '+(d.binding_constraints||[]).join('; '); toast('infeasible',true);
-    } else { fb.className='banner rej'; fb.textContent='error: '+(d.error||'failed'); toast('fx settle failed',true); }
-  }catch(e){toast('fx settle error',true);} finally{busy('#b_settle',false);}
+    } else {rejectConsensus();fb.className='banner rej';fb.textContent='error: '+(d.error||'failed');toast('fx settle failed',true);}
+  }catch(e){rejectConsensus();toast('fx settle error',true);}finally{busy('#b_settle_fx',false);setSettlementBusy(false);}
 }
 async function seedFloor(){
   try{const r=await fetch('/api/console/floors',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({party:'firma',floor:50,currency:'USD'})});
@@ -630,6 +901,7 @@ async function seedAgg(){
 /* ── Canton Token Standard (CIP-56) ── */
 function renderTokens(st){
   const el=$('#tokenlist'); const tk=(st&&st.token)||{instruments:[]};
+  const next=hash(tk);if(HASHES.tokens===next)return;HASHES.tokens=next;
   if(!tk.instruments.length){ el.innerHTML='— no token holdings —'; return; }
   el.innerHTML = tk.instruments.map(t=>{
     const rows=Object.entries(t.balances).map(([p,a])=>`${p}: <b>${(+a).toFixed(0)}</b>`).join(' &nbsp;·&nbsp; ');
@@ -646,31 +918,57 @@ async function tokenSeed(){
 }
 async function tokenSettleCross(){
   const tb=$('#tokenbanner'); tb.style.display='block'; tb.className='banner'; tb.textContent='netting both instruments + settling atomically…';
+  startConsensus();busy('#b_settle_token_cross',true,'awaiting consensus');
   try{const r=await fetch('/api/console/token-settle-cross',{method:'POST'});const d=await r.json();
-    if(d.ok){ render(d.state); tb.className='banner ok';
+    if(d.ok){completeConsensus();render(d.state);renderReceipt(d);tb.className='banner ok';
       const rep=d.report_by_instrument||{};
       const per=Object.entries(rep).map(([i,x])=>`${i}: ${x.gross_value}→${x.net_value} (${x.netting_efficiency_pct}%)`).join(' · ');
       tb.innerHTML='✓ CROSS-TOKEN ATOMIC SETTLE — '+d.leg_count+' residual legs across '+(d.instruments||[]).length+
         ' tokens settled in ONE transaction.<br><span style="font-size:.82rem">'+per+
         ' &nbsp;·&nbsp; total '+d.total_gross_all_instruments+'→'+d.total_net_all_instruments+'</span>'+evLine(d);
       toast('✓ Cross-token atomic DvP settled');
-    } else { tb.className='banner rej'; tb.textContent='error: '+(String(d.error||'failed').slice(0,180)); toast('cross-token settle failed',true); }
-  }catch(e){toast('cross-token error',true);}
+    } else {rejectConsensus();tb.className='banner rej';tb.textContent='error: '+(String(d.error||'failed').slice(0,180));toast('cross-token settle failed',true);}
+  }catch(e){rejectConsensus();toast('cross-token error',true);}
+  finally{busy('#b_settle_token_cross',false);setSettlementBusy(false);}
 }
 async function tokenSettleSingle(){
   const tb=$('#tokenbanner'); tb.style.display='block'; tb.className='banner'; tb.textContent='netting USDCx + settling…';
+  startConsensus();busy('#b_settle_token_single',true,'awaiting consensus');
   try{const r=await fetch('/api/console/token-settle',{method:'POST'});const d=await r.json();
-    if(d.ok){ render(d.state); tb.className='banner ok';
+    if(d.ok){completeConsensus();render(d.state);renderReceipt(d);tb.className='banner ok';
       tb.innerHTML='✓ USDCx settled over CIP-56 holdings: '+d.gross_value+'→'+d.net_value+' ('+d.netting_efficiency_pct+'% netted), '+d.residual_count+' residual leg(s), atomic'+evLine(d);
       toast('✓ USDCx settled over token standard');
-    } else { tb.className='banner rej'; tb.textContent='error: '+(String(d.error||'failed').slice(0,180)); toast('token settle failed',true); }
-  }catch(e){toast('token settle error',true);}
+    } else {rejectConsensus();tb.className='banner rej';tb.textContent='error: '+(String(d.error||'failed').slice(0,180));toast('token settle failed',true);}
+  }catch(e){rejectConsensus();toast('token settle error',true);}
+  finally{busy('#b_settle_token_single',false);setSettlementBusy(false);}
 }
 async function clearAll(){
   try{const r=await fetch('/api/console/clear-all',{method:'POST'});const d=await r.json();
     render(d.state); $('#fxbanner').style.display='none'; toast('All on-ledger constraints cleared');}
   catch(e){toast('clear-all error',true);}
 }
+
+async function resetDemo(){
+  busy('#b_reset',true,'resetting');
+  try{const r=await fetch('/api/console/reset',{method:'POST'});const d=await r.json();
+    if(!r.ok||!d.state)throw new Error(d.error||'reset failed');
+    COMPUTED=false;JUST_SETTLED=false;POLICY='';COUNTUP_PENDING=false;BOOK_STAGGER_PENDING=false;
+    SELECTED_PARTY='operator';BOOK_MIN_HEIGHT=0;$('#bookviewport').style.minHeight='';
+    Object.keys(HASHES).forEach(k=>delete HASHES[k]);hideReveal('#plancard');hideReveal('#receiptcard');
+    clearTimeout(consensusDelay);clearInterval(consensusTimer);$('#consensus').className='consensus';
+    $('#banner').className='banner';$('#fxbanner').style.display='none';$('#tokenbanner').style.display='none';
+    $('#policybanner').style.display='none';$('#policyin').value='';render(d.state);
+    toast('Demo reset — load a live book to begin.',!d.ok);
+  }catch(e){toast('demo reset failed',true);}
+  finally{busy('#b_reset',false);}
+}
+
+function initHint(){
+  try{if(!localStorage.getItem('tradeguard-console-hint-seen')){
+    localStorage.setItem('tradeguard-console-hint-seen','1');$('#firsthint').classList.add('on');}}
+  catch(e){$('#firsthint').classList.add('on');}
+}
+function dismissHint(){$('#firsthint').classList.remove('on');}
 
 async function doCreditBreach(){
   busy('#b_breach',true,'submitting breach to ledger');
@@ -700,6 +998,7 @@ async function doAdversarial(){
   catch(e){toast('adversarial error',true);} finally{busy('#b_adv',false);}
 }
 
+initHint();
 refresh();
 setInterval(()=>{ if(!$('#gate').classList.contains('on')) refresh(); }, 8000);
 </script>
