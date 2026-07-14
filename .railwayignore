@@ -1,0 +1,8 @@
+# keep the deploy payload small — runtime needs ui/ + agent/ + requirements only
+.demo-recording/
+.git/
+research/
+wireframes/
+df-probe/
+daml-local/
+docs/internal/
