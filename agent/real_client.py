@@ -17,7 +17,7 @@ NOTE (v2 JSON quirk): integer contract fields must be encoded as JSON STRINGS
 handles this transparently for create/exercise payloads.
 """
 from __future__ import annotations
-import base64, hashlib, hmac, json, os, time, urllib.request, urllib.error
+import base64, hashlib, hmac, http.client, json, os, socket, time, urllib.request, urllib.error
 from dataclasses import dataclass, field
 
 PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -35,6 +35,8 @@ else:
     REAL_PARTIES = os.path.join(PROJECT, "tradeguard-v3", "real-init-result.json")
 
 SECRET = "unsafe"  # LocalNet only
+WRITE_TIMEOUT = 90
+WRITE_RETRY_BACKOFF = 3.0
 
 
 def _b64(b: bytes) -> str:
@@ -144,30 +146,136 @@ class RealLedgerClient:
             return module_entity
         return f"{PKG}:{module_entity}"
 
-    def _post(self, path: str, body: dict) -> dict:
-        req = urllib.request.Request(HOST + path, data=json.dumps(body).encode(),
-            method="POST", headers={**self._hdr(), "Content-Type": "application/json"})
-        # DevNet's shared consensus is far slower than LocalNet; give commands room.
-        timeout = 120 if _IS_DEVNET else 40
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                return json.load(r)
-        except urllib.error.HTTPError as e:
-            return {"_http_error": e.code, "_body": e.read().decode()[:600]}
+    def _post(self, path: str, body: dict, *, write: bool = False,
+              before_retry=None) -> dict:
+        """POST JSON to the ledger.
 
-    def _ledger_end(self) -> int:
+        Reads preserve their existing single-attempt network behavior. Command writes get
+        one retry after a 3s backoff, but only for an ambiguous timeout or a transient
+        HTTP 429/5xx. Logical 4xx responses are returned immediately.
+        """
+        timeout = WRITE_TIMEOUT if write else (120 if _IS_DEVNET else 40)
+        attempts = 2 if write else 1
+
+        def reconcile() -> dict | None:
+            if not before_retry:
+                return None
+            try:
+                return before_retry()
+            except Exception as e:
+                return {"_http_error": 598, "_reconciliation_error": True,
+                        "_ambiguous": True,
+                        "_body": f"could not reconcile ambiguous command: {e}"}
+
+        for attempt in range(attempts):
+            req = urllib.request.Request(HOST + path, data=json.dumps(body).encode(),
+                method="POST", headers={**self._hdr(), "Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    return json.load(r)
+            except urllib.error.HTTPError as e:
+                error = {"_http_error": e.code, "_body": e.read().decode()[:600]}
+                retryable = e.code == 429 or 500 <= e.code <= 599
+                if write and retryable:
+                    committed = reconcile()
+                    if committed:
+                        return committed
+                    if attempt == 0:
+                        time.sleep(WRITE_RETRY_BACKOFF)
+                        continue
+                    error["_ambiguous"] = True
+                return error
+            except (TimeoutError, socket.timeout) as e:
+                if not write:
+                    raise
+                committed = reconcile()
+                if committed:
+                    return committed
+                if attempt == 0:
+                    time.sleep(WRITE_RETRY_BACKOFF)
+                    continue
+                return {"_http_error": 598, "_timeout": True, "_ambiguous": True,
+                        "_body": str(e) or "command timed out"}
+            except urllib.error.URLError as e:
+                is_timeout = isinstance(e.reason, (TimeoutError, socket.timeout))
+                if not write:
+                    raise
+                if is_timeout:
+                    committed = reconcile()
+                    if committed:
+                        return committed
+                    if attempt == 0:
+                        time.sleep(WRITE_RETRY_BACKOFF)
+                        continue
+                    return {"_http_error": 598, "_timeout": True,
+                            "_body": str(e.reason) or "command timed out"}
+                committed = reconcile()
+                if committed:
+                    return committed
+                return {"_http_error": 599, "_transport_error": True,
+                        "_ambiguous": True, "_body": str(e.reason) or str(e)}
+            except (json.JSONDecodeError, UnicodeDecodeError,
+                    http.client.HTTPException, ConnectionError) as e:
+                if not write:
+                    raise
+                committed = reconcile()
+                if committed:
+                    return committed
+                return {"_http_error": 599, "_transport_error": True,
+                        "_ambiguous": True, "_body": str(e) or type(e).__name__}
+        return {"_http_error": 598, "_timeout": True, "_ambiguous": True,
+                "_body": "command timed out"}
+
+    @staticmethod
+    def _obligation_matches(actual: dict, intended: dict) -> bool:
+        for key in ("payer", "payee", "operator", "reference", "maturity"):
+            if key in intended and actual.get(key) != intended.get(key):
+                return False
+        if "amount" in intended:
+            try:
+                if float(actual.get("amount")) != float(intended["amount"]):
+                    return False
+            except (TypeError, ValueError):
+                return False
+        if "instrument" in intended and actual.get("instrument") != intended.get("instrument"):
+            return False
+        return True
+
+    def _existing_reference(self, module_entity: str, payload: dict) -> dict | None:
+        """Resolve an ambiguously timed-out Obligation create by reference + payload."""
+        reference = payload.get("reference")
+        if not reference or not module_entity.endswith("TradeGuard.Netting:Obligation"):
+            return None
+        for contract in self.query(module_entity, strict=True):
+            actual = contract.get("payload", {})
+            if actual.get("reference") != reference:
+                continue
+            if not self._obligation_matches(actual, payload):
+                return {"_http_error": 409, "_reference_conflict": True,
+                        "_body": f"reference {reference!r} exists with different obligation fields"}
+            return {
+                "updateId": None,
+                "contractId": contract.get("contractId"),
+                "reference": reference,
+                "deduplicatedByReference": True,
+            }
+        return None
+
+    def _ledger_end(self, strict: bool = False) -> int:
         req = urllib.request.Request(HOST + "/v2/state/ledger-end", method="GET",
             headers=self._hdr())
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
                 return json.load(r).get("offset", 0)
         except Exception:
+            if strict:
+                raise
             return 0
 
-    def query(self, module_entity: str) -> list[dict]:
+    def query(self, module_entity: str, strict: bool = False) -> list[dict]:
         """Active contracts of a template visible to `party` (WildcardFilter ACS,
         filtered by template id client-side)."""
-        end = self._ledger_end()
+        end = self._ledger_end(strict=strict)
         body = {
             "filter": {"filtersByParty": {self.party: {
                 "cumulative": [{"identifierFilter": {
@@ -178,6 +286,8 @@ class RealLedgerClient:
         }
         resp = self._post("/v2/state/active-contracts", body)
         if isinstance(resp, dict) and "_http_error" in resp:
+            if strict:
+                raise RuntimeError(resp.get("_body") or f"ledger query failed: {resp['_http_error']}")
             return []
         items = resp if isinstance(resp, list) else resp.get("result", [])
         want = self.tid(module_entity)
@@ -195,41 +305,53 @@ class RealLedgerClient:
                             "payload": ce.get("createArgument", {})})
         return out
 
-    def create(self, module_entity: str, payload: dict, act_as: list[str] | None = None) -> dict:
+    def create(self, module_entity: str, payload: dict, act_as: list[str] | None = None,
+               before_retry=None) -> dict:
         actors = act_as or [self.party]
         body = {"commands": [{"CreateCommand": {
             "templateId": self.tid(module_entity), "createArguments": _stringify_ints(payload)}}],
             "commandId": f"tg-{os.urandom(4).hex()}",
             "actAs": actors, "readAs": actors}
-        return self._post("/v2/commands/submit-and-wait", body)
+        return self._post(
+            "/v2/commands/submit-and-wait", body, write=True,
+            before_retry=(before_retry
+                          or (lambda: self._existing_reference(module_entity, payload))))
 
-    def create_tree(self, module_entity: str, payload: dict, act_as: list[str] | None = None) -> dict:
+    def create_tree(self, module_entity: str, payload: dict, act_as: list[str] | None = None,
+                    before_retry=None) -> dict:
         actors = act_as or [self.party]
         body = {"commands": [{"CreateCommand": {
             "templateId": self.tid(module_entity), "createArguments": _stringify_ints(payload)}}],
             "commandId": f"tg-{os.urandom(4).hex()}",
             "actAs": actors, "readAs": actors}
-        return self._post("/v2/commands/submit-and-wait-for-transaction-tree", body)
+        return self._post(
+            "/v2/commands/submit-and-wait-for-transaction-tree", body, write=True,
+            before_retry=(before_retry
+                          or (lambda: self._existing_reference(module_entity, payload))))
 
     def exercise_tree(self, module_entity: str, contract_id: str, choice: str,
-                      argument: dict | None = None, act_as: list[str] | None = None) -> dict:
+                      argument: dict | None = None, act_as: list[str] | None = None,
+                      before_retry=None) -> dict:
         actors = act_as or [self.party]
         body = {"commands": [{"ExerciseCommand": {
             "templateId": self.tid(module_entity), "contractId": contract_id,
             "choice": choice, "choiceArgument": _stringify_ints(argument or {})}}],
             "commandId": f"tg-{os.urandom(4).hex()}",
             "actAs": actors, "readAs": actors}
-        return self._post("/v2/commands/submit-and-wait-for-transaction-tree", body)
+        return self._post("/v2/commands/submit-and-wait-for-transaction-tree", body,
+                          write=True, before_retry=before_retry)
 
     def exercise(self, module_entity: str, contract_id: str, choice: str,
-                 argument: dict | None = None, act_as: list[str] | None = None) -> dict:
+                 argument: dict | None = None, act_as: list[str] | None = None,
+                 before_retry=None) -> dict:
         actors = act_as or [self.party]
         body = {"commands": [{"ExerciseCommand": {
             "templateId": self.tid(module_entity), "contractId": contract_id,
             "choice": choice, "choiceArgument": _stringify_ints(argument or {})}}],
             "commandId": f"tg-{os.urandom(4).hex()}",
             "actAs": actors, "readAs": actors}
-        return self._post("/v2/commands/submit-and-wait", body)
+        return self._post("/v2/commands/submit-and-wait", body,
+                          write=True, before_retry=before_retry)
 
     def ready(self) -> bool:
         try:

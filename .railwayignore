@@ -1,8 +1,15 @@
-# keep the deploy payload small — runtime needs ui/ + agent/ + requirements only
+# Deploy payload = runtime only (ui/ + agent/ + party JSONs + requirements).
+# This uplink times out backboard uploads beyond ~tens of MB; keep it tiny.
 .demo-recording/
 .git/
 research/
 wireframes/
 df-probe/
 daml-local/
-docs/internal/
+docs/
+vendor/
+tradeguard/
+daml/
+tradeguard-v3/*
+!tradeguard-v3/devnet-parties.json
+!tradeguard-v3/real-init-result.json

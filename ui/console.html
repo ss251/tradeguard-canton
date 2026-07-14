@@ -416,7 +416,7 @@
       <div class="consensus" id="consensus" role="status" aria-live="polite">
         <div class="eyebrow">Settlement progress · one live ledger request</div>
         <div class="stages">
-          <div class="stage" data-consensus="1"><span class="mark">1</span><span class="stage-label">Human approval captured</span></div>
+          <div class="stage" data-consensus="1"><span class="mark">1</span><span class="stage-label">ApprovedAction written on-ledger</span></div>
           <div class="stage" data-consensus="2"><span class="mark">2</span><span>Submitted to validator</span></div>
           <div class="stage" data-consensus="3"><span class="mark">3</span><span>Awaiting <span id="consensus_network">DevNet</span> consensus — <span class="elapsed" id="consensus_elapsed">00:00</span><small class="caption">shared network, typically 30–90s</small></span></div>
           <div class="stage" data-consensus="4"><span class="mark">4</span><span>Committed</span></div>
@@ -428,7 +428,7 @@
         <h3>On-ledger Settlement Receipt <span class="tag">proof it settled on Canton</span></h3>
         <div class="rcpt-net" id="rcpt_net">—</div>
         <div class="evidence" id="rcpt_evidence"></div>
-        <div class="rcpt-note">These identifiers are the ledger's own record of this settlement — the batch contract, its update, and the committed offset. Verifiable independently against the Canton ledger; nothing here is simulated.</div>
+        <div class="rcpt-note" id="rcpt_note">These identifiers are the ledger's own record of the human authorization and settlement — the ApprovedAction, batch contract, updates, and committed offset. Verifiable independently against the Canton ledger; nothing here is simulated.</div>
       </div>
 
     </div>
@@ -441,7 +441,7 @@
 <div class="gate" id="gate" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="gate-title">
   <div class="box">
     <h4 id="gate-title">Human approval required</h4>
-    <p>The agent has computed a netting plan. It <b>cannot settle on its own.</b> Approve to submit the atomic settlement; the committed Canton identifiers return in the receipt.</p>
+    <p>The agent has computed a netting plan. It <b>cannot settle on its own.</b> Approving first writes a human-authorized <b>ApprovedAction on-ledger</b>; only after that round-trip succeeds will the console submit the atomic settlement.</p>
     <div class="det" id="gatedet"></div>
     <div class="btns">
       <button class="green" onclick="doSettle()">Approve &amp; settle</button>
@@ -702,6 +702,13 @@ function renderLimits(st){
 }
 
 function banner(kind,msg){const b=$('#banner');b.className='banner '+kind;b.textContent=msg;}
+function failureSummary(d,label){
+  const bits=[label];
+  if(d&&d.failed_refs&&d.failed_refs.length)bits.push('refs: '+d.failed_refs.slice(0,4).join(', '));
+  if(d&&d.last_error)bits.push(String(d.last_error).slice(0,160));
+  return bits.join(' · ');
+}
+function stateSuffix(d){return d&&d.state_error?' · state refresh failed: '+String(d.state_error).slice(0,100):'';}
 
 // truncate a long id in the middle so it stays one line but still recognisable
 function truncMid(s,head=12,tail=8){ s=String(s||''); return s.length<=head+tail+1 ? s : s.slice(0,head)+'…'+s.slice(-tail); }
@@ -709,6 +716,7 @@ function truncMid(s,head=12,tail=8){ s=String(s||''); return s.length<=head+tail
 // compact one-line on-ledger evidence for banners (item 8)
 function evLine(d){
   const bits=[];
+  if(d.approved_action_cid) bits.push('approval '+truncMid(d.approved_action_cid));
   if(d.batch_cid) bits.push('batch '+truncMid(d.batch_cid));
   if(d.limit_cid) bits.push('limit '+truncMid(d.limit_cid));
   if(d.update_id) bits.push('update '+truncMid(d.update_id));
@@ -722,11 +730,17 @@ function renderReceipt(d){
   if(!d || !d.ok){ hideReveal('#receiptcard'); return; }
   $('#rcpt_net').textContent = d.network || 'Canton ledger';
   const rows=[];
+  if(d.approved_action_cid) rows.push(['approval contract', truncMid(d.approved_action_cid), d.approved_action_cid]);
+  if(d.approval_update_id) rows.push(['approval update id', truncMid(d.approval_update_id), d.approval_update_id]);
+  if(d.approval_execution_update_id) rows.push(['approval consumed update', truncMid(d.approval_execution_update_id), d.approval_execution_update_id]);
   if(d.batch_cid) rows.push(['batch contract', truncMid(d.batch_cid), d.batch_cid]);
-  if(d.update_id) rows.push(['update id', truncMid(d.update_id), d.update_id]);
+  if(d.update_id) rows.push(['settlement update id', truncMid(d.update_id), d.update_id]);
   if(d.offset!=null) rows.push(['ledger offset', String(d.offset), String(d.offset)]);
   if(d.discharged!=null) rows.push([d.discharged+' obligations discharged', d.residuals+' residual leg(s)', '']);
   if(d.elapsed_ms!=null) rows.push(['settled in', d.elapsed_ms+' ms', '']);
+  $('#rcpt_note').textContent=d.approved_action_cid
+    ?"These identifiers are the ledger's own record of the human authorization and settlement — the ApprovedAction, batch contract, updates, and committed offset. Verifiable independently against the Canton ledger; nothing here is simulated."
+    :"These identifiers are the ledger's own record of this settlement — the settlement contract, update, and committed offset. Verifiable independently against the Canton ledger; nothing here is simulated.";
   $('#rcpt_evidence').innerHTML = rows.map(([k,v,title])=>
     `<div class="er"><span class="ek">${k}</span><span class="ev"${title?` title="${title}"`:''}>${v}</span></div>`).join('');
   showReveal('#receiptcard');
@@ -751,7 +765,7 @@ async function doSeed(){
     BOOK_STAGGER_PENDING=(STATE?.book_size||0)===0&&(d.state?.book_size||0)>0;
     COMPUTED=false;JUST_SETTLED=false;HASHES.plan=null;hideReveal('#plancard');hideReveal('#receiptcard');
     $('#banner').className='banner';if(d.state)render(d.state);
-    toast(d.ok?'Book seeded on-ledger':'seed failed',!d.ok);}
+    toast((d.ok?'Book seeded on-ledger':failureSummary(d,'seed incomplete'))+stateSuffix(d),!d.ok||!!d.state_error);}
   catch(e){toast('seed error',true);} finally{busy('#b_seed',false);}
 }
 async function seedPartial(){
@@ -759,7 +773,7 @@ async function seedPartial(){
   try{const r=await fetch('/api/console/seed-partial',{method:'POST'});const d=await r.json();
     BOOK_STAGGER_PENDING=(STATE?.book_size||0)===0&&(d.state?.book_size||0)>0;
     COMPUTED=true;JUST_SETTLED=false;HASHES.plan=null;hideReveal('#receiptcard');$('#banner').className='banner';render(d.state);
-    toast(d.ok?'Seeded forcing book + caps — Compute net to see the partial settle':'seed failed',!d.ok);
+    toast((d.ok?'Seeded forcing book + caps — Compute net to see the partial settle':failureSummary(d,'partial seed incomplete'))+stateSuffix(d),!d.ok||!!d.state_error);
   }catch(e){toast('partial seed error',true);} finally{busy('#b_partial',false);}
 }
 async function doCompute(){
@@ -800,16 +814,24 @@ function updateConsensusElapsed(started){
   $('#consensus_elapsed').textContent=String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
 }
 
-function startConsensus(){
+function startConsensus(requiresApproval=false){
   clearTimeout(consensusDelay);clearInterval(consensusTimer);setSettlementBusy(true);
   const panel=$('#consensus');panel.className='consensus';
   [1,2,3,4].forEach(n=>setConsensusStage(n,null));
-  setConsensusStage(1,'done');setConsensusStage(2,'active');$('#consensus_elapsed').textContent='00:00';
+  panel.querySelector('.stage-label').textContent=requiresApproval
+    ?'ApprovedAction written on-ledger':'Settlement request prepared';
+  $('#consensus_elapsed').textContent='00:00';
   $('#consensus_network').textContent=STATE&&String(STATE.network).includes('DevNet')?'DevNet':'ledger';
   requestAnimationFrame(()=>panel.classList.add('on'));
   const started=Date.now();panel.dataset.started=String(started);
-  consensusDelay=setTimeout(()=>{setConsensusStage(2,'done');setConsensusStage(3,'active');
-    updateConsensusElapsed(started);consensusTimer=setInterval(()=>updateConsensusElapsed(started),1000);},1000);
+  if(requiresApproval){
+    setConsensusStage(1,'active');
+    consensusTimer=setInterval(()=>updateConsensusElapsed(started),1000);
+  }else{
+    setConsensusStage(1,'done');setConsensusStage(2,'active');
+    consensusDelay=setTimeout(()=>{setConsensusStage(2,'done');setConsensusStage(3,'active');
+      updateConsensusElapsed(started);consensusTimer=setInterval(()=>updateConsensusElapsed(started),1000);},1000);
+  }
 }
 
 function completeConsensus(){
@@ -824,15 +846,22 @@ function rejectConsensus(){
   setTimeout(()=>{panel.className='consensus';},160);
 }
 async function doSettle(){
-  closeGate();startConsensus();busy('#b_settle',true,'awaiting consensus');
+  closeGate();startConsensus(true);busy('#b_settle',true,'awaiting approval + consensus');
   try{const r=await fetch('/api/console/settle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({policy:POLICY})});const d=await r.json();
-    if(d.infeasible){rejectConsensus();COMPUTED=true;render(d.state);
-      toast('infeasible under limits — not settled',true); }
+    if(d.approval_recorded)setConsensusStage(1,'done');
+    if(d.infeasible&&!d.approval_recorded){rejectConsensus();COMPUTED=true;if(d.state)render(d.state);
+      banner('rej',d.error||'Plan infeasible — approval was not written.');toast('infeasible under limits — not settled',true); }
     else {COMPUTED=false;JUST_SETTLED=d.ok;if(d.ok)completeConsensus();else rejectConsensus();
       if(d.state)render(d.state);renderReceipt(d);
-      if(d.ok)toast('✓ Settled atomically on-ledger'+(d.credit_limits_enforced?` (${d.credit_limits_enforced} limit(s) enforced)`:''));
-      else{banner('rej','Settlement rejected — '+(d.error||'the ledger did not commit the request'));toast('settle failed',true);}}}
-  catch(e){rejectConsensus();banner('rej','Settlement request failed — no ledger commit.');toast('settle error',true);}
+      if(d.ok){
+        if(d.approval_mark_error)banner('rej','Settlement committed, but ApprovedAction could not be marked executed — do not reuse this authorization.');
+        else if(d.state_error)banner('rej','Settlement committed, but the follow-up ledger state refresh failed — receipt evidence is preserved.');
+        toast('✓ ApprovedAction recorded + settled atomically'+(d.credit_limits_enforced?` (${d.credit_limits_enforced} limit(s) enforced)`:'')+stateSuffix(d),!!d.state_error||!!d.approval_mark_error);
+      }else if(d.approval_recorded&&d.ambiguous){banner('rej',d.error||'Approval recorded; settlement outcome is unknown. Refresh ledger state before retrying.');toast('approval recorded; settlement outcome unknown',true);
+      }else if(d.approval_recorded){banner('rej',d.error||'Approval recorded on-ledger; settlement failed; nothing moved in the final atomic settlement.');toast('approval recorded; settlement failed',true);
+      }else if(d.approval_ambiguous){banner('rej',d.error||'Approval outcome is unknown; settlement was not submitted. Refresh ledger state before retrying.');toast('approval outcome unknown; settlement not submitted',true);
+      }else{banner('rej','Settlement refused — '+(d.error||'ApprovedAction was not written'));toast('approval failed; settlement not submitted',true);}}}
+  catch(e){rejectConsensus();banner('rej','Settlement request failed — approval/settlement status unknown; refresh ledger state.');toast('settle error',true);}
   finally{busy('#b_settle',false);setSettlementBusy(false);}
 }
 
@@ -958,7 +987,7 @@ async function resetDemo(){
     clearTimeout(consensusDelay);clearInterval(consensusTimer);$('#consensus').className='consensus';
     $('#banner').className='banner';$('#fxbanner').style.display='none';$('#tokenbanner').style.display='none';
     $('#policybanner').style.display='none';$('#policyin').value='';render(d.state);
-    toast('Demo reset — load a live book to begin.',!d.ok);
+    toast((d.ok?'Demo reset — load a live book to begin.':failureSummary(d,'demo reset incomplete'))+stateSuffix(d),!d.ok||!!d.state_error);
   }catch(e){toast('demo reset failed',true);}
   finally{busy('#b_reset',false);}
 }

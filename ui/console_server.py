@@ -24,6 +24,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
@@ -54,6 +55,7 @@ HOLDING_T = "TradeGuard.Holding:Holding"
 FIRMS = ["firma", "firmb", "firmc"]
 VIEWERS = [("firma", "Firm A"), ("firmb", "Firm B"), ("firmc", "Firm C"),
            ("operator", "Operator (agent)"), ("netout", "Outsider")]
+POST_LOCK = threading.Lock()
 
 
 def _write_token():
@@ -83,13 +85,14 @@ def _obligations_for(party_key: str, parties: dict) -> list[dict]:
     """The obligations this party can see, shaped for the UI."""
     cli = RealLedgerClient(parties[party_key])
     out = []
-    for c in cli.query(OBL_T):
+    for c in cli.query(OBL_T, strict=True):
         p = c["payload"]
         out.append({
             "payer": _short(p["payer"]),
             "payee": _short(p["payee"]),
             "amount": float(p["amount"]),
             "ref": p.get("reference", ""),
+            "maturity": p.get("maturity"),
         })
     out.sort(key=lambda x: x["ref"])
     return out
@@ -103,8 +106,26 @@ def _solver_plan(book: list[dict], parties: dict, policy_text: str | None = None
     DEFERS the rest (the product behaviour — the rail never just refuses)."""
     if not book:
         return None
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    due_book = []
+    for row in book:
+        maturity = row.get("maturity")
+        if not maturity:
+            due_book.append(row)
+            continue
+        try:
+            if datetime.fromisoformat(str(maturity).replace("Z", "+00:00")) <= now:
+                due_book.append(row)
+        except ValueError:
+            due_book.append(row)
+    book = due_book
+    if not book:
+        return None
     ledger_limits = limmod.load_limits(parties)
     solver_limits = limmod.to_solver_limits(ledger_limits)
+    ledger_aggs = limmod.load_agg_limits(parties)
+    solver_aggs = limmod.to_solver_agg_limits(ledger_aggs)
     weights: dict = {}
     policy_info = None
     if policy_text:
@@ -117,7 +138,7 @@ def _solver_plan(book: list[dict], parties: dict, policy_text: str | None = None
             solver_limits = solver_limits + pol_limits
     obs = [SolverObligation(payer=o["payer"], payee=o["payee"], amount=o["amount"],
                             instrument="USD") for o in book]
-    r = solve_maximal(obs, solver_limits, weights)
+    r = solve_maximal(obs, solver_limits, weights, agg_limits=solver_aggs)
     # map settled/deferred solver indices back to the book rows (refs) for the UI
     settled_refs = [book[i].get("ref", f"#{i}") for i in r.settled_obligations]
     deferred_refs = [book[i].get("ref", f"#{i}") for i in r.deferred_obligations]
@@ -204,9 +225,10 @@ def build_state(policy_text: str | None = None) -> dict:
     # settlement status (operator's view). After settle the obligations are
     # discharged (book -> 0) and residual cash holdings exist at the firms.
     op = RealLedgerClient(parties["operator"])
-    settled = op.query(SETTLED_T)
-    batches = op.query(BATCH_T)
-    firm_holdings = sum(len(RealLedgerClient(parties[f]).query(HOLDING_T)) for f in FIRMS)
+    settled = op.query(SETTLED_T, strict=True)
+    batches = op.query(BATCH_T, strict=True)
+    firm_holdings = sum(
+        len(RealLedgerClient(parties[f]).query(HOLDING_T, strict=True)) for f in FIRMS)
 
     return {
         "network": ("Canton DevNet · 5N Seaport validator · JSON Ledger API v2"
@@ -234,9 +256,64 @@ def build_state(policy_text: str | None = None) -> dict:
         "residual_holdings": firm_holdings,
         "token": token_state(parties),
         # live ledger offset — advances on every auto-refresh, proving a real ledger binding
-        "ledger_offset": op._ledger_end(),
+        "ledger_offset": op._ledger_end(strict=True),
         "ts": time.strftime("%H:%M:%S"),
     }
+
+
+def settle_with_approval(policy_text: str | None = None) -> dict:
+    """Record the human ApprovedAction, then and only then run the core settlement."""
+    parties = load_real_parties()
+    book = _obligations_for("operator", parties)
+    plan = _solver_plan(book, parties, policy_text)
+    if not plan:
+        return {"ok": False, "approval_recorded": False,
+                "error": "no seeded book to approve"}
+    if plan.get("feasible") is False:
+        return {"ok": False, "infeasible": True, "approval_recorded": False,
+                "error": "plan is infeasible; approval was not written"}
+
+    approval = net_settle.record_plan_approval(plan)
+    if not approval.get("ok"):
+        return {
+            "ok": False,
+            "approval_recorded": False,
+            "approval_ambiguous": bool(approval.get("approval_ambiguous")),
+            "approval_error": approval.get("error"),
+            "recommendation_cid": approval.get("recommendation_cid"),
+            "recommendation_update_id": approval.get("recommendation_update_id"),
+            "error": approval.get("error") or "approval write failed",
+        }
+
+    try:
+        result = net_settle.settle_real(
+            policy_text, expected_book=book, approved_plan=plan,
+            approved_action_cid=approval.get("approved_action_cid"),
+            approval_trade_id=approval.get("approval_trade_id"))
+    except Exception as e:
+        result = {
+            "ok": False,
+            "ambiguous": True,
+            "error": ("approval recorded on-ledger; settlement did not return a confirmed "
+                      f"result — {e}"),
+        }
+    result.update({
+        "approval_recorded": True,
+        "approval_trade_id": approval.get("approval_trade_id"),
+        "approved_action_cid": approval.get("approved_action_cid"),
+        "approval_update_id": approval.get("approval_update_id"),
+        "recommendation_cid": approval.get("recommendation_cid"),
+        "recommendation_update_id": approval.get("recommendation_update_id"),
+    })
+    if not result.get("ok"):
+        settlement_error = (result.get("error") or
+                            ("settlement plan became infeasible" if result.get("infeasible")
+                             else "ledger did not commit the settlement"))
+        result["settlement_error"] = settlement_error
+        if not result.get("ambiguous"):
+            result["error"] = ("approval recorded on-ledger; settlement failed; nothing moved "
+                               f"in the final atomic settlement — {settlement_error}")
+    return result
 
 
 def reset_demo() -> dict:
@@ -247,32 +324,30 @@ def reset_demo() -> dict:
     ``limits.clear_all`` so reset has no broader party authority than today's flows.
     """
     parties = load_real_parties()
-    op = RealLedgerClient(parties["operator"])
-    cleared = {"obligations": 0, "batches": 0}
-    errors = []
-
-    for contract in op.query(OBL_T):
-        result = op.exercise(OBL_T, contract["contractId"], "Discharge", {})
-        if isinstance(result, dict) and result.get("_http_error"):
-            errors.append(result.get("_body", "failed to discharge obligation"))
-        else:
-            cleared["obligations"] += 1
-
-    for contract in op.query(BATCH_T):
-        result = op.exercise(
-            BATCH_T, contract["contractId"], "CancelNetting",
-            {"actor": parties["operator"]})
-        if isinstance(result, dict) and result.get("_http_error"):
-            errors.append(result.get("_body", "failed to cancel batch"))
-        else:
-            cleared["batches"] += 1
-
+    book = net_settle.clear_book(parties)
+    errors = list(book.get("errors") or [])
     constraints = limmod.clear_all(parties)
     if not all(v.get("ok", True) for v in constraints.values() if isinstance(v, dict)):
         errors.append("one or more on-ledger constraints could not be cleared")
 
-    return {"ok": not errors, "cleared": cleared,
-            "constraints": constraints, "errors": errors}
+    return {
+        "ok": bool(book.get("ok") and not errors),
+        "cleared": book.get("cleared", {"obligations": 0, "batches": 0}),
+        "book_refs": book.get("book_refs", []),
+        "failed_refs": book.get("failed_refs", []),
+        "last_error": errors[-1] if errors else None,
+        "constraints": constraints,
+        "errors": errors,
+    }
+
+
+def _attach_state(result: dict, policy_text: str | None = None) -> dict:
+    """Preserve write receipts even if the post-commit state refresh fails."""
+    try:
+        result["state"] = build_state(policy_text)
+    except Exception as e:
+        result["state_error"] = str(e)
+    return result
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -334,6 +409,12 @@ class Handler(BaseHTTPRequestHandler):
             return {}
 
     def do_POST(self):
+        # Seed/reset/approval/settlement are read-modify-write reconciliations. Serialize
+        # POST workflows so two console tabs cannot invalidate each other's ledger view.
+        with POST_LOCK:
+            self._do_POST()
+
+    def _do_POST(self):
         u = urlparse(self.path)
         if not self._authed():
             self._send(401, {"error": "unauthorized — append ?k=YOUR_KEY"})
@@ -345,13 +426,13 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/console/seed":
                 # create a dense 12-obligation book via instant v2 creates
                 res = net_settle.seed_book(dense=True)
-                res["state"] = build_state()
+                _attach_state(res)
                 self._send(200, res)
             elif u.path == "/api/console/seed-partial":
                 # seed the forcing scenario: a book + caps that require deferral, so the
                 # console shows MAXIMAL netting settle-some / defer-some (graceful degradation)
                 res = net_settle.seed_partial_book()
-                res["state"] = build_state()
+                _attach_state(res)
                 self._send(200, res)
             elif u.path == "/api/console/compute":
                 # pure read + CONSTRAINED solver plan (no ledger write); policy-aware
@@ -367,67 +448,67 @@ class Handler(BaseHTTPRequestHandler):
                 res = limmod.seed_limit(
                     body.get("from", "firma"), body.get("to", "firmc"),
                     float(body.get("limit", 20.0)), body.get("currency", "USD"))
-                res["state"] = build_state()
+                _attach_state(res)
                 self._send(200, res)
             elif u.path == "/api/console/limits/clear":
                 res = limmod.clear_limits()
-                res["state"] = build_state()
+                _attach_state(res)
                 self._send(200, res)
             elif u.path == "/api/console/agg-limit":
                 # seed an on-ledger AGGREGATE exposure cap: {party, limit, currency}
                 res = limmod.seed_agg_limit(
                     body.get("party", "firma"), float(body.get("limit", 50.0)),
                     body.get("currency", "USD"))
-                res["state"] = build_state()
+                _attach_state(res)
                 self._send(200, res)
             elif u.path == "/api/console/agg-limit/clear":
                 res = limmod.clear_agg_limits()
-                res["state"] = build_state()
+                _attach_state(res)
                 self._send(200, res)
             elif u.path == "/api/console/settle":
                 # human-approved atomic settle via the constrained solver under the
                 # live on-ledger limits (~2-3s); policy-aware. Infeasible => no settle.
-                res = net_settle.settle_real(policy_text)
-                res["state"] = build_state()
+                res = settle_with_approval(policy_text)
+                _attach_state(res)
                 self._send(200, res)
             elif u.path == "/api/console/adversarial":
                 # submit a REAL fraudulent NettingBatch to the LIVE ledger; the
                 # on-ledger conservation guard rejects it (returns the actual error)
                 res = net_settle.attempt_fraud()
-                res["state"] = build_state()
+                _attach_state(res)
                 self._send(200, res)
             elif u.path == "/api/console/credit-breach":
                 # seed an on-ledger CreditLimit the true plan breaches, submit the
                 # conserving plan, show the ledger reject it on the credit limit
                 res = net_settle.attempt_credit_breach()
-                res["state"] = build_state()
+                _attach_state(res)
                 self._send(200, res)
             elif u.path == "/api/console/seed-fx":
                 # seed a 2-currency book + a co-signed FX rate (cross-currency demo)
                 res = net_settle.seed_fx_book()
-                res["state"] = build_state()
+                _attach_state(res)
                 self._send(200, res)
             elif u.path == "/api/console/settle-fx":
                 # value-net the cross-currency book at the co-signed rate and settle
                 res = net_settle.settle_cross_currency()
-                res["state"] = build_state()
+                _attach_state(res)
                 self._send(200, res)
             elif u.path == "/api/console/floors":
                 # seed an on-ledger LiquidityFloor: {party,floor,currency}
                 res = limmod.seed_liquidity_floor(
                     body.get("party", "firma"), float(body.get("floor", 50.0)),
                     body.get("currency", "USD"))
-                res["state"] = build_state()
+                _attach_state(res)
                 self._send(200, res)
             elif u.path == "/api/console/clear-all":
                 # clear every on-ledger constraint (limits, fx, floors)
                 res = limmod.clear_all()
-                res["state"] = build_state()
+                _attach_state(res)
                 self._send(200, res)
             elif u.path == "/api/console/reset":
                 # Judge mode: clear the live book + constraints and reseed nothing.
                 res = reset_demo()
-                res["state"] = build_state()
+                _attach_state(res)
                 self._send(200, res)
             elif u.path == "/api/console/token-seed":
                 # CIP-56: reset token state + mint the two-instrument book
@@ -435,19 +516,19 @@ class Handler(BaseHTTPRequestHandler):
                 token_settle.clear_tg_holdings()
                 res = token_settle.mint_book_multi()
                 res["ok"] = all(v == "ok" for v in res.get("minted", {}).values())
-                res["state"] = build_state()
+                _attach_state(res)
                 self._send(200, res)
             elif u.path == "/api/console/token-settle":
                 # CIP-56 M1: net the single-instrument (USDCx) book and settle the
                 # residuals atomically over real token-standard holdings
                 res = token_settle.settle_token()
-                res["state"] = build_state()
+                _attach_state(res)
                 self._send(200, res)
             elif u.path == "/api/console/token-settle-cross":
                 # CIP-56 M2 (CIP-112 flagship): net BOTH instruments and settle every
                 # residual leg across BOTH tokens in ONE atomic transaction
                 res = token_settle.settle_cross_token()
-                res["state"] = build_state()
+                _attach_state(res)
                 self._send(200, res)
             else:
                 self._send(404, {"error": "not found"})

@@ -61,6 +61,40 @@ def _tree_created_cid(resp: dict, suffix: str) -> str:
     return matches[-1]
 
 
+def _clear_verified(template: str, parties: dict, actors_for) -> dict:
+    """Archive every visible constraint and verify the final ACS is empty."""
+    op = RealLedgerClient(parties["operator"])
+    try:
+        initial = op.query(template, strict=True)
+    except Exception as e:
+        return {"ok": False, "cleared": 0, "failed_refs": [],
+                "last_error": f"initial constraint query failed: {e}",
+                "errors": [f"initial constraint query failed: {e}"]}
+    errors = []
+    for contract in initial:
+        result = op.exercise(template, contract["contractId"], "Archive", {},
+                             act_as=actors_for(contract))
+        error = _err(result)
+        if error:
+            errors.append(f"{contract['contractId']}: {error}")
+    try:
+        final = op.query(template, strict=True)
+    except Exception as e:
+        errors.append(f"final constraint query failed: {e}")
+        return {"ok": False, "cleared": 0, "failed_refs": [],
+                "last_error": errors[-1], "errors": errors}
+    final_ids = {c["contractId"] for c in final}
+    if final and not errors:
+        errors.append("ledger verification found constraints still active after clear")
+    return {
+        "ok": not final,
+        "cleared": sum(c["contractId"] not in final_ids for c in initial),
+        "failed_refs": sorted(final_ids),
+        "last_error": errors[-1] if errors else None,
+        "errors": errors,
+    }
+
+
 @dataclass
 class LedgerLimit:
     """An on-ledger CreditLimit, with both its contractId and its parsed values."""
@@ -100,7 +134,7 @@ def load_limits(parties: dict | None = None) -> list[LedgerLimit]:
     parties = parties or load_real_parties()
     op = RealLedgerClient(parties["operator"])
     out: list[LedgerLimit] = []
-    for c in op.query(CREDIT_LIMIT_T):
+    for c in op.query(CREDIT_LIMIT_T, strict=True):
         pl = c["payload"]
         out.append(LedgerLimit(
             cid=c["contractId"], frm=pl["from"], to=pl["to"],
@@ -126,20 +160,9 @@ def clear_limits(parties: dict | None = None) -> dict:
     """Archive every CreditLimit on the ledger (clean slate for a new policy).
     Archived via the operator using the generic Archive choice."""
     parties = parties or load_real_parties()
-    op = RealLedgerClient(parties["operator"])
-    cleared = 0
-    errors = []
-    for c in op.query(CREDIT_LIMIT_T):
-        # CreditLimit signatories are from+operator; operator can archive with from's
-        # consent. The admin token acts as both.
-        frm = c["payload"]["from"]
-        r = op.exercise(CREDIT_LIMIT_T, c["contractId"], "Archive", {},
-                        act_as=[frm, parties["operator"]])
-        if _err(r):
-            errors.append(_err(r))
-        else:
-            cleared += 1
-    return {"ok": not errors, "cleared": cleared, "errors": errors}
+    return _clear_verified(
+        CREDIT_LIMIT_T, parties,
+        lambda c: [c["payload"]["from"], parties["operator"]])
 
 
 # ─────────────────────────  AGGREGATE exposure limits  ─────────────────────────
@@ -183,7 +206,7 @@ def load_agg_limits(parties: dict | None = None) -> list[LedgerAggLimit]:
     parties = parties or load_real_parties()
     op = RealLedgerClient(parties["operator"])
     out: list[LedgerAggLimit] = []
-    for c in op.query(AGG_LIMIT_T):
+    for c in op.query(AGG_LIMIT_T, strict=True):
         pl = c["payload"]
         out.append(LedgerAggLimit(
             cid=c["contractId"], party=pl["party"],
@@ -207,18 +230,9 @@ def agg_limit_cids(ledger_aggs: list[LedgerAggLimit]) -> list[str]:
 def clear_agg_limits(parties: dict | None = None) -> dict:
     """Archive every AggregateLimit on the ledger."""
     parties = parties or load_real_parties()
-    op = RealLedgerClient(parties["operator"])
-    cleared = 0
-    errors = []
-    for c in op.query(AGG_LIMIT_T):
-        pty = c["payload"]["party"]
-        r = op.exercise(AGG_LIMIT_T, c["contractId"], "Archive", {},
-                        act_as=[pty, parties["operator"]])
-        if _err(r):
-            errors.append(_err(r))
-        else:
-            cleared += 1
-    return {"ok": not errors, "cleared": cleared, "errors": errors}
+    return _clear_verified(
+        AGG_LIMIT_T, parties,
+        lambda c: [c["payload"]["party"], parties["operator"]])
 
 
 # --- FX rates (co-signed, on-ledger) ---------------------------------------------
@@ -261,7 +275,7 @@ def load_fx_rates(parties: dict | None = None) -> list[LedgerFXRate]:
     parties = parties or load_real_parties()
     op = RealLedgerClient(parties["operator"])
     out: list[LedgerFXRate] = []
-    for c in op.query(FX_RATE_T):
+    for c in op.query(FX_RATE_T, strict=True):
         pl = c["payload"]
         # parties is a GenMap encoding {"map":[[party,{}],...]}
         pmap = pl.get("parties", {})
@@ -282,19 +296,11 @@ def fx_triples(rates: list[LedgerFXRate]) -> list[tuple[str, str, float]]:
 
 def clear_fx_rates(parties: dict | None = None) -> dict:
     parties = parties or load_real_parties()
-    op = RealLedgerClient(parties["operator"])
-    cleared, errors = 0, []
-    for c in op.query(FX_RATE_T):
-        pl = c["payload"]
-        pmap = pl.get("parties", {})
+    def actors(contract):
+        pmap = contract["payload"].get("parties", {})
         signers = [kv[0] for kv in pmap.get("map", [])] if isinstance(pmap, dict) else []
-        r = op.exercise(FX_RATE_T, c["contractId"], "Archive", {},
-                        act_as=[parties["operator"]] + signers)
-        if _err(r):
-            errors.append(_err(r))
-        else:
-            cleared += 1
-    return {"ok": not errors, "cleared": cleared, "errors": errors}
+        return [parties["operator"]] + signers
+    return _clear_verified(FX_RATE_T, parties, actors)
 
 
 # --- liquidity floors (on-ledger) ------------------------------------------------
@@ -332,7 +338,7 @@ def load_liquidity_floors(parties: dict | None = None) -> list[LedgerFloor]:
     parties = parties or load_real_parties()
     op = RealLedgerClient(parties["operator"])
     out: list[LedgerFloor] = []
-    for c in op.query(LIQUIDITY_FLOOR_T):
+    for c in op.query(LIQUIDITY_FLOOR_T, strict=True):
         pl = c["payload"]
         out.append(LedgerFloor(cid=c["contractId"], party=pl["party"],
                                currency=pl.get("currency", "USD"), floor=float(pl["floor"])))
@@ -345,17 +351,9 @@ def floor_cids(floors: list[LedgerFloor]) -> list[str]:
 
 def clear_liquidity_floors(parties: dict | None = None) -> dict:
     parties = parties or load_real_parties()
-    op = RealLedgerClient(parties["operator"])
-    cleared, errors = 0, []
-    for c in op.query(LIQUIDITY_FLOOR_T):
-        party = c["payload"]["party"]
-        r = op.exercise(LIQUIDITY_FLOOR_T, c["contractId"], "Archive", {},
-                        act_as=[parties["operator"], party])
-        if _err(r):
-            errors.append(_err(r))
-        else:
-            cleared += 1
-    return {"ok": not errors, "cleared": cleared, "errors": errors}
+    return _clear_verified(
+        LIQUIDITY_FLOOR_T, parties,
+        lambda c: [parties["operator"], c["payload"]["party"]])
 
 
 def clear_all(parties: dict | None = None) -> dict:

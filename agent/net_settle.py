@@ -77,13 +77,193 @@ def _leg_ccy(sender, receiver, bank, amount, s_acc, r_acc, ccy) -> dict:
 
 
 def _err(resp: dict) -> str | None:
-    if isinstance(resp, dict) and "_http_error" in resp:
-        return resp.get("_body", "")[:400]
+    if not isinstance(resp, dict):
+        return "invalid ledger response"
+    if any(key in resp for key in ("_http_error", "_timeout", "_transport_error")):
+        return resp.get("_body", "")[:400] or "ledger command failed"
     return None
 
 
 def _short(party: str) -> str:
     return party.split("::")[0]
+
+
+OBLIGATION_T = "TradeGuard.Netting:Obligation"
+BATCH_T = "TradeGuard.Netting:NettingBatch"
+RECOMMENDATION_T = "TradeGuard.Agent:SettlementRecommendation"
+APPROVED_ACTION_T = "TradeGuard.Agent:ApprovedAction"
+
+
+def _reference(contract: dict) -> str:
+    return str(contract.get("payload", {}).get("reference", ""))
+
+
+def _obligation_matches(contract: dict, parties: dict,
+                        intended: tuple[str, str, float, str]) -> bool:
+    payer, payee, amount, reference = intended
+    payload = contract.get("payload", {})
+    try:
+        amount_matches = float(payload.get("amount")) == float(amount)
+    except (TypeError, ValueError):
+        amount_matches = False
+    return (
+        payload.get("payer") == payer
+        and payload.get("payee") == payee
+        and payload.get("operator") == parties["operator"]
+        and payload.get("instrument") == _instr(parties["netbank"])
+        and payload.get("reference") == reference
+        and not payload.get("maturity")
+        and amount_matches
+    )
+
+
+def _clear_book_rows(op: RealLedgerClient, parties: dict,
+                     obligations: list[dict], batches: list[dict]) -> list[str]:
+    """Attempt every requested archive and return per-item errors."""
+    errors = []
+    for contract in obligations:
+        result = op.exercise(OBLIGATION_T, contract["contractId"], "Discharge", {})
+        error = _err(result)
+        if error:
+            errors.append(f"{_reference(contract) or contract['contractId']}: {error}")
+    for contract in batches:
+        result = op.exercise(BATCH_T, contract["contractId"], "CancelNetting",
+                             {"actor": parties["operator"]})
+        error = _err(result)
+        if error:
+            errors.append(f"batch {contract['contractId']}: {error}")
+    return errors
+
+
+def clear_book(parties: dict | None = None) -> dict:
+    """Clear obligations/batches and verify the empty result from ledger truth."""
+    parties = parties or load_real_parties()
+    op = RealLedgerClient(parties["operator"])
+    initial_obligations = op.query(OBLIGATION_T, strict=True)
+    initial_batches = op.query(BATCH_T, strict=True)
+    errors = _clear_book_rows(op, parties, initial_obligations, initial_batches)
+    final_obligations = op.query(OBLIGATION_T, strict=True)
+    final_batches = op.query(BATCH_T, strict=True)
+    final_obligation_ids = {c["contractId"] for c in final_obligations}
+    final_batch_ids = {c["contractId"] for c in final_batches}
+    failed_refs = [_reference(c) or c["contractId"] for c in final_obligations]
+    if final_batches:
+        failed_refs.extend(f"batch:{c['contractId']}" for c in final_batches)
+    if failed_refs and not errors:
+        errors.append("ledger verification found contracts still active after clear")
+    return {
+        "ok": not final_obligations and not final_batches,
+        "cleared": {
+            "obligations": sum(c["contractId"] not in final_obligation_ids
+                               for c in initial_obligations),
+            "batches": sum(c["contractId"] not in final_batch_ids for c in initial_batches),
+        },
+        "failed_refs": failed_refs,
+        "last_error": errors[-1] if errors else None,
+        "errors": errors,
+        "book_refs": sorted(_reference(c) for c in final_obligations),
+    }
+
+
+def _sweep_unexpected_obligations(
+        op: RealLedgerClient, parties: dict,
+        intended_book: list[tuple[str, str, float, str]]) -> list[str]:
+    """Remove junk, payload mismatches, and duplicate references."""
+    intended = {row[3]: row for row in intended_book}
+    seen: set[str] = set()
+    errors = []
+    for contract in op.query(OBLIGATION_T, strict=True):
+        reference = _reference(contract)
+        expected = intended.get(reference)
+        keep = bool(expected and reference not in seen
+                    and _obligation_matches(contract, parties, expected))
+        if keep:
+            seen.add(reference)
+            continue
+        result = op.exercise(OBLIGATION_T, contract["contractId"], "Discharge", {})
+        error = _err(result)
+        if error:
+            errors.append(f"{reference or contract['contractId']}: {error}")
+    return errors
+
+
+def _seed_obligation_book(parties: dict,
+                          book: list[tuple[str, str, float, str]]) -> dict:
+    """Replace the live book with exactly `book`, then verify by querying the ledger."""
+    op = RealLedgerClient(parties["operator"])
+    initial_obligations = op.query(OBLIGATION_T, strict=True)
+    initial_batches = op.query(BATCH_T, strict=True)
+    errors = _clear_book_rows(op, parties, initial_obligations, initial_batches)
+    errors.extend(_sweep_unexpected_obligations(op, parties, book))
+
+    bank = parties["netbank"]
+    operator = parties["operator"]
+    instrument = _instr(bank)
+    intended_by_ref = {row[3]: row for row in book}
+    existing_refs = {
+        _reference(c) for c in op.query(OBLIGATION_T, strict=True)
+        if (_reference(c) in intended_by_ref
+            and _obligation_matches(c, parties, intended_by_ref[_reference(c)]))
+    }
+    create_errors: dict[str, str] = {}
+    for payer, payee, amount, reference in book:
+        if reference in existing_refs:
+            continue
+        result = RealLedgerClient(payer).create(
+            OBLIGATION_T,
+            {"payer": payer, "payee": payee, "operator": operator,
+             "instrument": instrument, "amount": amount, "reference": reference},
+            act_as=[payer, payee])
+        error = _err(result)
+        if error:
+            create_errors[reference] = error
+            errors.append(f"{reference}: {error}")
+        else:
+            existing_refs.add(reference)
+
+    errors.extend(_sweep_unexpected_obligations(op, parties, book))
+    final_obligations = op.query(OBLIGATION_T, strict=True)
+    final_batches = op.query(BATCH_T, strict=True)
+    actual_refs = sorted(_reference(c) for c in final_obligations)
+    intended_refs = sorted(row[3] for row in book)
+    final_obligation_ids = {c["contractId"] for c in final_obligations}
+    final_batch_ids = {c["contractId"] for c in final_batches}
+
+    missing_refs = [ref for ref in intended_refs if ref not in actual_refs]
+    unexpected_refs = list(actual_refs)
+    for ref in intended_refs:
+        if ref in unexpected_refs:
+            unexpected_refs.remove(ref)
+    mismatched_refs = [
+        _reference(c) for c in final_obligations
+        if (_reference(c) in intended_by_ref
+            and not _obligation_matches(c, parties, intended_by_ref[_reference(c)]))
+    ]
+    failed_refs = missing_refs + [f"unexpected:{ref}" for ref in unexpected_refs]
+    failed_refs.extend(f"mismatch:{ref}" for ref in mismatched_refs)
+    failed_refs.extend(f"batch:{c['contractId']}" for c in final_batches)
+    exact_book = actual_refs == intended_refs and not mismatched_refs
+    if failed_refs and not errors:
+        errors.append("ledger book does not match the intended obligations")
+
+    return {
+        "ok": exact_book and not final_batches,
+        "created": sum(
+            _reference(c) in intended_by_ref
+            and _obligation_matches(c, parties, intended_by_ref[_reference(c)])
+            for c in final_obligations),
+        "total": len(intended_refs),
+        "cleared": {
+            "obligations": sum(c["contractId"] not in final_obligation_ids
+                               for c in initial_obligations),
+            "batches": sum(c["contractId"] not in final_batch_ids for c in initial_batches),
+        },
+        "book_refs": actual_refs,
+        "failed_refs": failed_refs,
+        "last_error": errors[-1] if errors else None,
+        "errors": errors,
+        "create_errors": create_errors,
+    }
 
 
 def _present_firms(parties: dict) -> list[str]:
@@ -175,7 +355,17 @@ def _issue_and_lock(parties, bank, operator, instr_cid, owner_party, acc_id, amo
     return _tree_created_cid(r2, "TradeGuard.Holding:Holding")
 
 
-def _tree_created_cid(resp: dict, template_suffix: str) -> str:
+def _tree_update_id(resp: dict) -> str | None:
+    """Extract the update id from either common v2 transaction-tree response shape."""
+    if not isinstance(resp, dict):
+        return None
+    return (resp.get("updateId")
+            or (resp.get("transactionTree") or {}).get("updateId")
+            or (resp.get("transaction") or {}).get("updateId"))
+
+
+def _tree_created_cid(resp: dict, template_suffix: str,
+                      allow_fallback: bool = True) -> str:
     """Extract the created contractId of `template_suffix` from a transaction-tree
     response. The tree's eventsById holds CreatedTreeEvents with contractId+templateId.
     We pick the newest created event whose templateId ends with the wanted suffix."""
@@ -191,11 +381,13 @@ def _tree_created_cid(resp: dict, template_suffix: str) -> str:
         if cid and (tmpl.endswith(template_suffix) or not template_suffix):
             matches.append(cid)
     if not matches:
-        # fall back: any contractId in the tree
-        import re
-        cids = re.findall(r'"contractId"\s*:\s*"([^"]+)"', json_dumps(resp))
-        if cids:
-            return cids[-1]
+        if allow_fallback:
+            # Older tree shapes omitted template ids; preserve the legacy fallback for
+            # existing settlement helpers, but governance evidence opts out below.
+            import re
+            cids = re.findall(r'"contractId"\s*:\s*"([^"]+)"', json_dumps(resp))
+            if cids:
+                return cids[-1]
         raise RuntimeError(f"no created {template_suffix} in tree: {str(resp)[:300]}")
     return matches[-1]
 
@@ -229,29 +421,20 @@ def _residual_legs_and_allocs(parties, bank, operator, instr_cid, residuals, aut
 
 
 def seed_book(dense: bool = True) -> dict:
-    """Create a confidential obligation book on the live ledger via v2 creates.
-    dense=True -> a richer 12-obligation book across the 3 firms (kills 'toy data');
-    dense=False -> the canonical 5-obligation book. Idempotent-ish: clears first."""
-    parties = load_real_parties()
-    op = RealLedgerClient(parties["operator"])
-    # clear any existing book first (clean slate for the demo)
-    for c in op.query("TradeGuard.Netting:Obligation"):
-        op.exercise("TradeGuard.Netting:Obligation", c["contractId"], "Discharge", {})
-    for c in op.query("TradeGuard.Netting:NettingBatch"):
-        op.exercise("TradeGuard.Netting:NettingBatch", c["contractId"], "CancelNetting",
-                    {"actor": parties["operator"]})
+    """Replace the live book and verify the exact intended references by query.
 
-    bank = parties["netbank"]
-    opp = parties["operator"]
+    dense=True -> a richer 12-obligation book across the 3 firms (kills 'toy data');
+    dense=False -> the canonical 5-obligation book.
+    """
+    parties = load_real_parties()
     A, B, C = parties["firma"], parties["firmb"], parties["firmc"]
-    instr = _instr(bank)
 
     if dense:
         # 12 obligations, criss-crossing. Net positions still resolve to A as sole
         # net payer (so the on-ledger settle path holds), but the GROSS is much larger.
         # A out: 100+50+60+40=250 ; A in: 30+80+20+20=150 -> A net -100
         # B out: 100+30+25+20=175 ; B in: 100+60+20+20=200 -> B net +25
-        # C out: 80+20+20+20=140 ; C in: 50+40+100+25=215 -> C net +75  (check: -100+25+75=0)
+        # C out: 80+20+20+20=140 ; C in: 50+40+100+25=215 -> C net +75
         # gross 565 -> residual 100 (A->B 25, A->C 75): 82.3% netted out
         book = [
             (A, B, 100.0, "A->B inv1"), (A, C, 50.0, "A->C inv2"),
@@ -266,58 +449,143 @@ def seed_book(dense: bool = True) -> dict:
                 (C, A, 80.0, "C->A inv3"), (A, C, 50.0, "A->C inv4"),
                 (C, B, 30.0, "C->B inv5")]
 
-    created = 0
-    for payer, payee, amt, ref in book:
-        r = RealLedgerClient(payer).create(
-            "TradeGuard.Netting:Obligation",
-            {"payer": payer, "payee": payee, "operator": opp,
-             "instrument": instr, "amount": amt, "reference": ref},
-            act_as=[payer, payee])
-        if not _err(r):
-            created += 1
-    return {"ok": created == len(book), "created": created, "total": len(book)}
+    return _seed_obligation_book(parties, book)
 
 
 def seed_partial_book() -> dict:
-    """Seed a book that FORCES graceful degradation: FirmC is the sole receiver of two
-    obligations (A->C 30, B->C 25). With inbound caps A->C<=30 and B->C<=20, the full
-    book would owe C 55 but C can receive at most 50 — no reroute exists (C is a pure
-    sink), so maximal netting must settle the feasible subset (A->C 30) and DEFER B->C.
-    Also seeds those two on-ledger CreditLimits. Clears any existing book/limits first.
-    """
+    """Seed and verify the forcing book plus the two on-ledger CreditLimits."""
     from agent import limits as limmod
     parties = load_real_parties()
-    op = RealLedgerClient(parties["operator"])
-    for c in op.query("TradeGuard.Netting:Obligation"):
-        op.exercise("TradeGuard.Netting:Obligation", c["contractId"], "Discharge", {})
-    for c in op.query("TradeGuard.Netting:NettingBatch"):
-        op.exercise("TradeGuard.Netting:NettingBatch", c["contractId"], "CancelNetting",
-                    {"actor": parties["operator"]})
-    limmod.clear_all(parties)
-
-    bank, opp = parties["netbank"], parties["operator"]
     A, B, C = parties["firma"], parties["firmb"], parties["firmc"]
-    instr = _instr(bank)
-    book = [(A, C, 30.0, "A->C p1"), (B, C, 25.0, "B->C p2")]
-    created = 0
-    for payer, payee, amt, ref in book:
-        r = RealLedgerClient(payer).create(
-            "TradeGuard.Netting:Obligation",
-            {"payer": payer, "payee": payee, "operator": opp,
-             "instrument": instr, "amount": amt, "reference": ref},
-            act_as=[payer, payee])
-        if not _err(r):
-            created += 1
+    constraints_cleared = limmod.clear_all(parties)
+    result = _seed_obligation_book(
+        parties, [(A, C, 30.0, "A->C p1"), (B, C, 25.0, "B->C p2")])
     l1 = limmod.seed_limit("firma", "firmc", 30.0, "USD", parties)
     l2 = limmod.seed_limit("firmb", "firmc", 20.0, "USD", parties)
-    return {"ok": created == len(book) and l1.get("ok") and l2.get("ok"),
-            "created": created, "total": len(book),
-            "limits": "A->C<=30, B->C<=20 (book owes C 55, C can take 50 -> defer)"}
+    limit_errors = [str(item.get("error")) for item in (l1, l2) if not item.get("ok")]
+    if not all(v.get("ok", True) for v in constraints_cleared.values()
+               if isinstance(v, dict)):
+        limit_errors.append("one or more prior constraints could not be cleared")
+    if limit_errors:
+        result["errors"].extend(limit_errors)
+        result["last_error"] = limit_errors[-1]
+    result.update({
+        "ok": bool(result["ok"] and l1.get("ok") and l2.get("ok") and not limit_errors),
+        "limits": "A->C<=30, B->C<=20 (book owes C 55, C can take 50 -> defer)",
+        "constraint_clear": constraints_cleared,
+    })
+    return result
+
+
+def record_plan_approval(plan: dict) -> dict:
+    """Write the agent recommendation and human approval to the ledger.
+
+    The operator is both the agent principal and the human approver in this MVP, matching
+    `agent.cli`. Settlement callers must stop if this function does not return `ok`.
+    """
+    parties = load_real_parties()
+    operator = parties["operator"]
+    op = RealLedgerClient(operator)
+    residuals = plan.get("residual_transfers") or []
+    gross = float(plan.get("gross_obligations") or 0)
+    net = float(plan.get("gross_residual") or 0)
+    leg_summary = ", ".join(
+        f"{leg.get('sender')}->{leg.get('receiver')} {float(leg.get('amount') or 0):g}"
+        for leg in residuals) or "none"
+    trade_id = f"NET-{op._ledger_end()}-{os.urandom(3).hex()}"
+
+    def reconciled_tree(template: str, contract: dict) -> dict:
+        return {
+            "_reconciled": True,
+            "transactionTree": {"eventsById": {"reconciled": {
+                "CreatedTreeEvent": {"value": {
+                    "contractId": contract["contractId"],
+                    "templateId": op.tid(template),
+                }}}}},
+        }
+
+    def find_by_trade_id(template: str) -> dict | None:
+        for contract in op.query(template, strict=True):
+            payload = contract.get("payload", {})
+            value = payload.get("tradeId", {})
+            value = value.get("unpack") if isinstance(value, dict) else value
+            if value == trade_id and payload.get("decision") == "SETTLE":
+                return reconciled_tree(template, contract)
+        return None
+
+    recommendation = op.create_tree(
+        RECOMMENDATION_T,
+        {
+            "agent": operator,
+            "approver": operator,
+            "tradeId": _id(trade_id),
+            "decision": "SETTLE",
+            "rationale": [
+                f"Gross obligations: {gross:g} USD",
+                f"Net residual: {net:g} USD",
+                f"Residual legs: {leg_summary}",
+                "Book references: " + ", ".join(
+                    sorted((plan.get("settled_refs") or []) +
+                           (plan.get("deferred_refs") or []))),
+            ],
+            "confidence": (f"{float(plan.get('netting_efficiency_pct') or 0):g}% netted; "
+                           f"{len(residuals)} residual leg(s)"),
+        },
+        act_as=[operator], before_retry=lambda: find_by_trade_id(RECOMMENDATION_T))
+    error = _err(recommendation)
+    if error:
+        return {"ok": False, "approval_recorded": False,
+                "approval_ambiguous": bool(recommendation.get("_ambiguous")),
+                "error": f"recommendation write failed: {error}"}
+    try:
+        recommendation_cid = _tree_created_cid(
+            recommendation, RECOMMENDATION_T, allow_fallback=False)
+    except RuntimeError as e:
+        return {"ok": False, "approval_recorded": False,
+                "error": f"recommendation evidence missing: {e}"}
+
+    approval = op.exercise_tree(
+        RECOMMENDATION_T, recommendation_cid, "Approve", {}, act_as=[operator],
+        before_retry=lambda: find_by_trade_id(APPROVED_ACTION_T))
+    error = _err(approval)
+    if error:
+        return {
+            "ok": False,
+            "approval_recorded": False,
+            "approval_ambiguous": bool(approval.get("_ambiguous")),
+            "recommendation_cid": recommendation_cid,
+            "recommendation_update_id": _tree_update_id(recommendation),
+            "error": f"approval write failed: {error}",
+        }
+    try:
+        approved_action_cid = _tree_created_cid(
+            approval, APPROVED_ACTION_T, allow_fallback=False)
+    except RuntimeError as e:
+        return {
+            "ok": False,
+            "approval_recorded": False,
+            "recommendation_cid": recommendation_cid,
+            "recommendation_update_id": _tree_update_id(recommendation),
+            "error": f"approval evidence missing: {e}",
+        }
+    return {
+        "ok": True,
+        "approval_recorded": True,
+        "approval_trade_id": trade_id,
+        "approved_action_cid": approved_action_cid,
+        "approval_update_id": _tree_update_id(approval),
+        "recommendation_cid": recommendation_cid,
+        "recommendation_update_id": _tree_update_id(recommendation),
+    }
 
 
 def settle_real(policy_text: str | None = None, maximal: bool = True,
                 exclude_parties: list[str] | None = None,
-                fail_party: str | None = None) -> dict:
+                fail_party: str | None = None,
+                expected_book: list[dict] | None = None,
+                approved_plan: dict | None = None,
+                approved_action_cid: str | None = None,
+                approval_trade_id: str | None = None) -> dict:
     """Settle the existing seeded book atomically via v2 using the CONSTRAINED SOLVER.
 
     By default uses MAXIMAL FEASIBLE NETTING (the product behaviour): it settles the
@@ -333,6 +601,8 @@ def settle_real(policy_text: str | None = None, maximal: bool = True,
     live; the survivors' book settles). fail_party: TEST HOOK — simulate a funding
     failure for that party (its residual legs get an underfunded holding, so the
     on-ledger settle rejects atomically; used to prove the re-net loop end-to-end).
+    The console also supplies the approved book snapshot and ApprovedAction CID; both
+    are re-verified before any settlement preparation writes begin.
     """
     t0 = time.time()
     parties = load_real_parties()
@@ -366,9 +636,34 @@ def settle_real(policy_text: str | None = None, maximal: bool = True,
 
     # query the obligations ONCE so the solver's indices align with the on-ledger cids
     op = RealLedgerClient(operator)
-    all_rows = op.query("TradeGuard.Netting:Obligation")
+    all_rows = op.query("TradeGuard.Netting:Obligation", strict=True)
     if not all_rows:
         return {"ok": False, "error": "no seeded book to settle"}
+    if expected_book is not None:
+        def book_key(row):
+            payload = row.get("payload", row)
+            return (
+                str(payload.get("reference", payload.get("ref", ""))),
+                _short(str(payload.get("payer", ""))),
+                _short(str(payload.get("payee", ""))),
+                float(payload.get("amount", 0)),
+                str(payload.get("maturity") or ""),
+            )
+        if sorted(book_key(row) for row in all_rows) != sorted(book_key(row) for row in expected_book):
+            return {"ok": False, "error":
+                    "approved book changed before settlement; nothing was submitted"}
+    if approved_action_cid:
+        approvals = op.query(APPROVED_ACTION_T, strict=True)
+        approved = next((c for c in approvals
+                         if c.get("contractId") == approved_action_cid), None)
+        payload = approved.get("payload", {}) if approved else {}
+        trade_id = payload.get("tradeId", {})
+        trade_id = trade_id.get("unpack") if isinstance(trade_id, dict) else trade_id
+        if (not approved or payload.get("decision") != "SETTLE"
+                or payload.get("agent") != operator or payload.get("approver") != operator
+                or (approval_trade_id and trade_id != approval_trade_id)):
+            return {"ok": False, "error":
+                    "ApprovedAction is not active for this plan; settlement was not submitted"}
     # MATURITY FILTER: only DUE obligations enter the netting book. Immature ones
     # (maturity in the future) stay live for a later cycle — and the on-ledger
     # Discharge guard would reject them anyway (defense in depth).
@@ -423,6 +718,29 @@ def settle_real(policy_text: str | None = None, maximal: bool = True,
                     "rationale": plan.rationale, "policy": policy_info}
         settle_set = set(range(len(obl_rows)))
 
+    if approved_plan is not None:
+        settled_refs = sorted(obl_rows[i]["payload"].get("reference", "")
+                              for i in settle_set)
+        deferred_refs = sorted(obl_rows[i]["payload"].get("reference", "")
+                               for i in set(range(len(obl_rows))) - settle_set)
+        transfers = sorted((_short(short2full[t.sender]), _short(short2full[t.receiver]),
+                            round(float(t.amount), 10)) for t in plan.transfers)
+        approved_transfers = sorted((str(t.get("sender")), str(t.get("receiver")),
+                                     round(float(t.get("amount", 0)), 10))
+                                    for t in approved_plan.get("residual_transfers", []))
+        same_plan = (
+            settled_refs == sorted(approved_plan.get("settled_refs", []))
+            and deferred_refs == sorted(approved_plan.get("deferred_refs", []))
+            and transfers == approved_transfers
+            and round(float(plan.gross_obligations), 10)
+                == round(float(approved_plan.get("gross_obligations", 0)), 10)
+            and round(float(plan.gross_residual), 10)
+                == round(float(approved_plan.get("gross_residual", 0)), 10)
+        )
+        if not same_plan:
+            return {"ok": False, "error":
+                    "approved plan changed before settlement; nothing was submitted"}
+
     residuals = [(short2full[t.sender], short2full[t.receiver], t.amount)
                  for t in plan.transfers]
 
@@ -471,13 +789,46 @@ def settle_real(policy_text: str | None = None, maximal: bool = True,
 
     # settle: controller = operator :: parties
     actors = [operator] + sorted(involved)
-    rs = op.exercise("TradeGuard.Netting:NettingBatch", batch_cid, "SettleNetting",
-                     {"allocations": allocs}, act_as=actors)
+
+    def settle_committed() -> dict | None:
+        active_batches = {c["contractId"] for c in op.query(BATCH_T, strict=True)}
+        active_obligations = {c["contractId"] for c in op.query(OBLIGATION_T, strict=True)}
+        if batch_cid in active_batches or any(cid in active_obligations for cid in obl_cids):
+            return None
+        return {"updateId": None, "completionOffset": op._ledger_end(strict=True),
+                "_reconciled": True}
+
+    rs = op.exercise(BATCH_T, batch_cid, "SettleNetting",
+                     {"allocations": allocs}, act_as=actors,
+                     before_retry=settle_committed)
     e = _err(rs)
     if e:
-        return {"ok": False, "error": f"settle failed: {e}", "failed_settle": True,
+        ambiguous = bool(rs.get("_ambiguous")) if isinstance(rs, dict) else False
+        return {"ok": False,
+                "error": (("settlement status unknown after transport failure: " if ambiguous
+                           else "settle failed: ") + e),
+                "ambiguous": ambiguous,
+                "failed_settle": not ambiguous,
                 "residual_plan": [{"sender": _short(s), "receiver": _short(r),
                                    "amount": a} for (s, r, a) in residuals]}
+
+    approval_execution_update_id = None
+    approval_mark_error = None
+    if approved_action_cid:
+        def approval_marked() -> dict | None:
+            active = {c["contractId"] for c in op.query(APPROVED_ACTION_T, strict=True)}
+            if approved_action_cid in active:
+                return None
+            return {"updateId": None, "completionOffset": op._ledger_end(strict=True),
+                    "_reconciled": True}
+
+        marked = op.exercise(
+            APPROVED_ACTION_T, approved_action_cid, "MarkExecuted", {}, act_as=[operator],
+            before_retry=approval_marked)
+        approval_mark_error = _err(marked)
+        if not approval_mark_error:
+            approval_execution_update_id = marked.get("updateId")
+
     gross = round(sum(a for (_, _, a) in facts_raw), 2)
     net = round(sum(t.amount for t in plan.transfers), 2)
     settled_gross = round(sum(facts_raw[i][2] for i in settle_set), 2)
@@ -503,6 +854,8 @@ def settle_real(policy_text: str | None = None, maximal: bool = True,
             "discharged_cids": obl_cids[:8],
             "elapsed_ms": round((time.time() - t0) * 1000),
             "network": _network_label(),
+            "approval_execution_update_id": approval_execution_update_id,
+            "approval_mark_error": approval_mark_error,
             "policy": policy_info}
 
 
